@@ -1,0 +1,27 @@
+version: '3'
+
+vars:
+  PLUGINS:
+    sh: find plugins -mindepth 1 -maxdepth 1 -type d | sort
+  TESTABLE:
+    sh: find plugins -mindepth 2 -maxdepth 2 -name Taskfile.yml -exec dirname {} \; | sort
+
+tasks:
+  default:
+    desc: Validate manifests and run every plugin's tests
+    cmds:
+      - task: validate
+      - task: test
+
+  validate:
+    desc: Validate the marketplace catalog and every plugin manifest
+    cmds:
+      - claude plugin validate .
+      - for: { var: PLUGINS }
+        cmd: claude plugin validate {{.ITEM}}
+
+  test:
+    desc: Run each plugin's own `task test` with the tools pinned in its mise.toml
+    cmds:
+      - for: { var: TESTABLE }
+        cmd: mise -C {{.ITEM}} exec -- task test
