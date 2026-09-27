@@ -33,8 +33,10 @@ merge_one() { # ID BRANCH -> 0 merged (or already merged), 1 conflict
 run_tests() { echo "== $(git rev-parse --short HEAD)" >>"$test_log"; bash -c "$test_cmd" >>"$test_log" 2>&1; }
 
 pre=$(git rev-parse HEAD)
-batch=()
+batch=(); already=()
 for spec in "$@"; do
+  # A branch merged by an earlier run is kept as-is: never re-tested, never undone.
+  if git merge-base --is-ancestor "${spec#*=}" HEAD 2>/dev/null; then already+=("$spec"); continue; fi
   if merge_one "${spec%%=*}" "${spec#*=}"; then batch+=("$spec"); else conflicts+=("${spec%%=*}"); fi
 done
 
@@ -46,19 +48,20 @@ if [ ${#batch[@]} -gt 0 ]; then
     # Bisect: replay the batch one merge at a time, testing after each.
     git reset --quiet --hard "$pre"
     for spec in "${batch[@]}"; do
+      before=$(git rev-parse HEAD)
       merge_one "${spec%%=*}" "${spec#*=}" || { conflicts+=("${spec%%=*}"); continue; }
       if run_tests; then
         kept+=("$spec")
       else
         culprits+=("${spec%%=*}")
-        git reset --quiet --hard HEAD^1
+        git reset --quiet --hard "$before"
       fi
     done
   fi
 fi
 
 merged='[]'
-for spec in "${kept[@]}"; do
+for spec in "${already[@]}" "${kept[@]}"; do
   id=${spec%%=*}; branch=${spec#*=}
   sha=$(git log -1 --merges --format=%H --grep="^Merge $id (")
   n=${id#T}

@@ -81,3 +81,18 @@ task_branch() {
   [ "$(jq -c '[.merged[].task]' <<<"$output")" = '["T1"]' ]
   [ "$(grep -c '^Task 1:' "$LEDGER")" -eq 1 ]
 }
+
+@test "never undoes an already-merged branch while bisecting a red batch" {
+  task_branch T1 a.txt one
+  "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T1=plan/p--T1 >/dev/null
+  echo BAD >"$REPO/red.txt"
+  git -C "$REPO" add red.txt
+  git -C "$REPO" commit -qm "red baseline"
+  tip=$(git -C "$REPO" rev-parse HEAD)
+  task_branch T2 c.txt three
+  run "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T1=plan/p--T1 T2=plan/p--T2
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '[.merged[].task]' <<<"$output")" = '["T1"]' ]
+  [ "$(jq -c .culprits <<<"$output")" = '["T2"]' ]
+  [ "$(git -C "$REPO" rev-parse HEAD)" = "$tip" ]
+}
