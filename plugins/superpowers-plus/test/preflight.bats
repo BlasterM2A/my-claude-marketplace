@@ -83,7 +83,7 @@ field() { printf '%s\n' "${lines[@]}" | sed -n "s/^$1=//p"; }
 @test "uses the bundled agents when the user defines none" {
   run "$PF" "$REPO" "$REPO/docs/plan.md"
   [ "$status" -eq 0 ]
-  [ "$(field AGENTS | jq -c .)" = '{"fast":"superpowers-parallel:sp-implementer-fast","standard":"superpowers-parallel:sp-implementer","reviewer":"superpowers-parallel:sp-reviewer","escalation":"superpowers-parallel:sp-final-reviewer"}' ]
+  [ "$(field AGENTS | jq -c .)" = '{"fast":"superpowers-plus:sp-implementer-fast","standard":"superpowers-plus:sp-implementer","reviewer":"superpowers-plus:sp-reviewer","escalation":"superpowers-plus:sp-final-reviewer"}' ]
 }
 
 @test "user and project agents replace the bundled ones by name" {
@@ -95,7 +95,7 @@ field() { printf '%s\n' "${lines[@]}" | sed -n "s/^$1=//p"; }
   [ "$status" -eq 0 ]
   [ "$(field AGENTS | jq -r .reviewer)" = "sp-reviewer" ]
   [ "$(field AGENTS | jq -r .fast)" = "sp-implementer-fast" ]
-  [ "$(field AGENTS | jq -r .standard)" = "superpowers-parallel:sp-implementer" ]
+  [ "$(field AGENTS | jq -r .standard)" = "superpowers-plus:sp-implementer" ]
 }
 
 @test "refuses a dirty checkout" {

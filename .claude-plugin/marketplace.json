@@ -9,13 +9,16 @@
   ],
   "plugins": [
     {
-      "name": "superpowers-parallel",
-      "source": "./plugins/superpowers-parallel",
+      "name": "superpowers-plus",
+      "source": "./plugins/superpowers-plus",
       "description": "Execute approved Superpowers plans in parallel lane worktrees with a serialized merge queue.",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "dependencies": [
         "superpowers@claude-plugins-official"
       ]
     }
-  ]
+  ],
+  "renames": {
+    "superpowers-parallel": "superpowers-plus"
+  }
 }

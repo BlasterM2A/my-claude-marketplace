@@ -73,7 +73,7 @@ agent_type() {
   for d in "$repo/.claude/agents" "$agents_dir"; do
     [ -d "$d" ] && grep -rqxE --include='*.md' "name:[[:space:]]*$1[[:space:]]*" "$d" && { echo "$1"; return; }
   done
-  echo "superpowers-parallel:$1"
+  echo "superpowers-plus:$1"
 }
 
 echo "SP_SKILLS=$sp_skills"

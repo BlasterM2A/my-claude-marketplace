@@ -1,4 +1,4 @@
-# superpowers-parallel
+# superpowers-plus
 
 Claude Code plugin that runs approved Superpowers plans in parallel.
 

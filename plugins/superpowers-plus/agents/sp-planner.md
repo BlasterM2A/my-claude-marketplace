@@ -1,6 +1,6 @@
 ---
 name: sp-planner
-description: Planner for superpowers-parallel runs. Resolves one coordination signal (question, gap, interface change, new task) during a parallel plan execution and records the ruling.
+description: Planner for superpowers-plus runs. Resolves one coordination signal (question, gap, interface change, new task) during a parallel plan execution and records the ruling.
 model: opus
 effort: high
 ---

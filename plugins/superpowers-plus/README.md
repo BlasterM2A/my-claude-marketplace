@@ -1,4 +1,4 @@
-# superpowers-parallel
+# superpowers-plus
 
 Runs an approved [Superpowers](https://github.com/obra/superpowers) implementation plan in parallel: tasks start as soon as their dependencies are merged, each in a persistent lane worktree under `.worktrees/`, and a single merge queue integrates them with full-suite tests. A planner agent resolves questions and gaps that agents raise, and an Opus reviewer checks the whole branch at the end.
 
@@ -13,7 +13,7 @@ The plugin bundles the subagents it dispatches: `sp-implementer-fast` (haiku/low
 
 ## Usage
 
-After writing and approving a plan with Superpowers, ask Claude to execute it with `superpowers-parallel:parallel-plan-execution`. You approve the task graph; everything else runs in the background (`/workflows` shows progress).
+After writing and approving a plan with Superpowers, ask Claude to execute it with `superpowers-plus:parallel-plan-execution`. You approve the task graph; everything else runs in the background (`/workflows` shows progress).
 
 ## Development
 

@@ -20,7 +20,7 @@ test('a new_task signal adds and runs a task', async () => {
     if (label === 'planner·S1') return planner('add_task', { new_task: newTask('helper') })
   })
   const { result, calls } = await runWorkflow({ agent, args: baseArgs([task('T1')]) })
-  assert.equal(calls.find(c => c.label === 'planner·S1').agentType, 'superpowers-parallel:sp-planner')
+  assert.equal(calls.find(c => c.label === 'planner·S1').agentType, 'superpowers-plus:sp-planner')
   assert.equal(find(result, 'N1').state, 'merged')
   assert.match(calls.find(c => c.label === 'N1·impl').prompt, /\/ws\/helper\.md/)
 })

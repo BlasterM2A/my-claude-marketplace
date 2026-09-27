@@ -1,7 +1,7 @@
 export const meta = {
   name: 'parallel-sdd',
   description: 'Run an approved Superpowers plan in parallel lane worktrees with a serialized merge queue',
-  whenToUse: 'Launched by the superpowers-parallel:parallel-plan-execution skill with an approved plan graph',
+  whenToUse: 'Launched by the superpowers-plus:parallel-plan-execution skill with an approved plan graph',
   phases: [
     { title: 'Setup', detail: 'create lane worktrees and install dependencies' },
     { title: 'Merge queue', detail: 'serialized merges, full-suite tests, integration checkpoints' },
@@ -14,11 +14,11 @@ export const meta = {
 const A = args
 // Bundled agents by default; preflight maps a role to the user's own agent when one with the same name exists.
 const AG = Object.assign({
-  fast: 'superpowers-parallel:sp-implementer-fast',
-  standard: 'superpowers-parallel:sp-implementer',
-  reviewer: 'superpowers-parallel:sp-reviewer',
-  escalation: 'superpowers-parallel:sp-final-reviewer',
-  planner: 'superpowers-parallel:sp-planner',
+  fast: 'superpowers-plus:sp-implementer-fast',
+  standard: 'superpowers-plus:sp-implementer',
+  reviewer: 'superpowers-plus:sp-reviewer',
+  escalation: 'superpowers-plus:sp-final-reviewer',
+  planner: 'superpowers-plus:sp-planner',
 }, A.agents || {})
 const S = `${A.pluginDir}/scripts`
 const SDD = `${A.spSkills}/subagent-driven-development`
