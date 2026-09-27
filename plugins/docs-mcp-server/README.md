@@ -26,7 +26,7 @@ If you already configured the same server by hand (`claude mcp add …`), Claude
 
 ```bash
 docs-mcp libraries
-docs-mcp search react "useEffect cleanup" --version 19.x
+docs-mcp search web-react "useEffect cleanup" --version 19.x
 docs-mcp scrape web-react https://react.dev/reference --version 19.0.0 --max-pages 300 --wait
 docs-mcp wait <job-id> --timeout 600
 docs-mcp remove web-react --version 18.3.1 --yes

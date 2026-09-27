@@ -29,7 +29,7 @@ For a single lookup use the MCP tools. Use the `docs-mcp` command (on the `PATH`
 
 ```bash
 DOCS_MCP_URL="${DOCS_MCP_URL:-${user_config.url}}" docs-mcp libraries
-DOCS_MCP_URL="${DOCS_MCP_URL:-${user_config.url}}" docs-mcp search react "useEffect cleanup" --version 19.x
+DOCS_MCP_URL="${DOCS_MCP_URL:-${user_config.url}}" docs-mcp search web-react "useEffect cleanup" --version 19.x
 DOCS_MCP_URL="${DOCS_MCP_URL:-${user_config.url}}" docs-mcp scrape web-react https://react.dev/reference --version 19.0.0 --max-pages 300 --wait
 ```
 

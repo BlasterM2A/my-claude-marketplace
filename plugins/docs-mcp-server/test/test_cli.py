@@ -69,6 +69,19 @@ class EndpointResolutionTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("http://", err)
 
+    def test_malformed_urls_are_usage_errors_with_no_traceback(self):
+        for bad_url in (
+            "https://host:port/mcp",
+            "http://exa mple/mcp",
+            "https://[::1/mcp",
+        ):
+            with self.subTest(bad_url=bad_url):
+                code, out, err = run_cli("libraries", "--url", bad_url)
+                self.assertEqual(code, 2)
+                self.assertEqual(out, "")
+                self.assertIn(bad_url, err)
+                self.assertNotIn("Traceback", err)
+
 
 class ProtocolTest(unittest.TestCase):
     def test_handshake_then_session_and_protocol_headers_on_every_later_request(self):
@@ -307,6 +320,25 @@ class WaitTest(unittest.TestCase):
             code, _, err = run_cli("wait", JOB, "--timeout", "0.2", "--interval", "0.05", "--url", server.url)
         self.assertEqual(code, 4)
         self.assertIn("still running", err)
+
+    def test_wait_fails_fast_when_reply_has_no_parseable_status(self):
+        unparseable = text_result("Job Info:\n\n- ID: " + JOB + "\n  Library: react@19.0.0")
+        with FakeMcpServer({"get_job_info": lambda a: unparseable}) as server:
+            code, out, err = run_cli("wait", JOB, "--interval", "0", "--url", server.url)
+        self.assertEqual(code, 3)
+        self.assertEqual(out, "")
+        self.assertIn("Library: react@19.0.0", err)
+        self.assertEqual(server.calls("get_job_info"), [{"jobId": JOB}])
+
+    def test_scrape_wait_json_prints_only_the_final_job_result(self):
+        tools = {"scrape_docs": started(), "get_job_info": statuses("queued", "completed")}
+        with FakeMcpServer(tools) as server:
+            code, out, _ = run_cli(
+                "scrape", "react", "https://react.dev", "--wait", "--json", "--interval", "0", "--url", server.url
+            )
+        self.assertEqual(code, 0)
+        parsed = json.loads(out)
+        self.assertIn("Status: completed", "\n".join(item.get("text", "") for item in parsed.get("content", [])))
 
     def test_scrape_wait_without_job_id_exits_3_and_shows_the_text(self):
         tools = {"scrape_docs": lambda a: text_result("Scraping finished"), "get_job_info": statuses("completed")}

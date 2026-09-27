@@ -1,3 +1,4 @@
 target-version = "py310"
 line-length = 120
 extend-include = ["bin/docs-mcp"]
+extend-exclude = ["docs"]
