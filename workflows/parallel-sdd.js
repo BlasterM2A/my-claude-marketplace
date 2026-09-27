@@ -186,6 +186,19 @@ function reviewPrompt(t, lens, tag, scoped) {
   ].join('\n')
 }
 
+function fixPrompt(t, lane, findings, tag) {
+  return [
+    `You fix task ${t.id} ("${t.title}") of the plan ${A.plan} (spec: ${A.spec}), fix round ${tag}. ${CWD_RULE}`,
+    `Lane: ${lane}. Task branch: ${branchOf(t)}. Workspace: ${WS}.`,
+    `1. Run: ${S}/lanes checkout ${lane} ${branchOf(t)} ${A.planBranch}`,
+    `2. Read the brief ${briefOf(t)}, the previous report ${WS}/${t.id}-report.md, and ${WS}/decisions.md if it exists.`,
+    '3. Resolve every finding below, with a test for each behavior change:',
+    ...findings.map((f, i) => `   ${i + 1}. [${f.severity}] ${f.detail}${f.file ? ` (${f.file})` : ''}`),
+    `4. You own ONLY these files: ${t.files.join(', ')}. Run the task's tests in the lane, commit with the "${t.id}: " prefix, and append what you changed to ${WS}/${t.id}-report.md.`,
+    'Return the same fields as the implementer: status, branch, commit, files_touched, tests_passed, summary, rulings, signals.',
+  ].join('\n')
+}
+
 function mergePrompt(batch) {
   const specs = batch.map(t => `${t.id}=${branchOf(t)}`).join(' ')
   return [
@@ -217,12 +230,29 @@ function collect(by, result) {
   for (const text of result.rulings || []) rulings.push({ by, text })
 }
 
-async function reviewTask(t, tag) {
-  const review = await agent(reviewPrompt(t, 'spec', tag, false), {
-    label: `${t.id}·${tag}`, phase: phaseOf(t), agentType: AG.reviewer, schema: REVIEW_SCHEMA,
+async function reviewTask(t, tag, scoped) {
+  const lenses = !scoped && t.risk === 'high' ? ['spec', 'integration'] : ['spec']
+  const labelOf = lens => `${t.id}·${lens === 'integration' ? 'review-int' : tag}`
+  const results = await parallel(lenses.map(lens => () => agent(reviewPrompt(t, lens, tag, scoped), {
+    label: labelOf(lens), phase: phaseOf(t), agentType: AG.reviewer, schema: REVIEW_SCHEMA,
+  })))
+  if (results.some(r => !r)) return null
+  results.forEach((r, i) => collect(labelOf(lenses[i]), r))
+  return {
+    verdict: results.every(r => r.verdict === 'approved') ? 'approved' : 'changes_requested',
+    findings: results.flatMap(r => r.findings),
+  }
+}
+
+async function fixRound(t, lane, findings, tag, round) {
+  rounds[t.id] = (rounds[t.id] || 0) + 1
+  const fix = await agent(fixPrompt(t, lane, findings, tag), {
+    label: `${t.id}·fix-${tag}`, phase: phaseOf(t), agentType: round >= 4 ? AG.escalation : implType(t), schema: IMPL_SCHEMA,
   })
-  if (review) collect(`${t.id}·${tag}`, review)
-  return review
+  if (!fix) return { ok: false, reason: `fixer ${tag} returned no result` }
+  collect(`${t.id}·fix-${tag}`, fix)
+  if (fix.status === 'BLOCKED') return { ok: false, reason: `fixer ${tag} BLOCKED: ${fix.summary}` }
+  return { ok: true }
 }
 
 async function implementAndReview(t, lane) {
@@ -232,14 +262,26 @@ async function implementAndReview(t, lane) {
   if (!impl) return { ok: false, reason: 'implementer returned no result' }
   collect(`${t.id}·impl`, impl)
   if (impl.status === 'BLOCKED') return { ok: false, reason: `implementer BLOCKED: ${impl.summary}` }
-  const review = await reviewTask(t, 'review')
+  let review = await reviewTask(t, 'review', false)
+  for (let round = 1; review && review.verdict !== 'approved'; round++) {
+    if (round > 5) return { ok: false, reason: 'fix loop exhausted after 5 rounds' }
+    const fix = await fixRound(t, lane, review.findings, `r${round}`, round)
+    if (!fix.ok) return fix
+    review = await reviewTask(t, `re-review-r${round}`, true)
+  }
   if (!review) return { ok: false, reason: 'reviewer returned no result' }
-  if (review.verdict !== 'approved') return { ok: false, reason: 'review requested changes' }
   return { ok: true }
 }
 
-async function mergeTask(t) {
-  return enqueueMerge(t, false)
+async function mergeTask(t, lane) {
+  const first = await enqueueMerge(t, false)
+  if (first.ok || !first.retry) return first
+  const fix = await fixRound(t, lane, first.findings, 'merge', 1)
+  if (!fix.ok) return fix
+  const review = await reviewTask(t, 're-review-merge', true)
+  if (!review || review.verdict !== 'approved') return { ok: false, reason: `${first.reason}; the fix was not approved` }
+  const second = await enqueueMerge(t, true)
+  return second.ok ? second : { ok: false, reason: first.reason }
 }
 
 async function depsMerged(t) {
