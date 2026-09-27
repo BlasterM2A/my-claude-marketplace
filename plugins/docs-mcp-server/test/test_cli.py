@@ -236,5 +236,86 @@ class CommandMappingTest(unittest.TestCase):
         self.assertNotIn("second line", out)
 
 
+JOB = "11111111-2222-3333-4444-555555555555"
+
+
+def job_info(status: str) -> dict:
+    return text_result(f"Job Info:\n\n- ID: {JOB}\n  Status: {status}\n  Library: react@19.0.0")
+
+
+def statuses(*sequence: str):
+    """A get_job_info handler returning the given statuses in order, then repeating the last one."""
+    remaining = list(sequence)
+
+    def handler(_arguments):
+        status = remaining.pop(0) if len(remaining) > 1 else remaining[0]
+        return job_info(status)
+
+    return handler
+
+
+def started(kind: str = "Scraping"):
+    return lambda _arguments: text_result(f"🚀 {kind} job started with ID: {JOB}.")
+
+
+class WaitTest(unittest.TestCase):
+    def test_parse_job_id_from_scrape_and_refresh_replies(self):
+        self.assertEqual(cli.parse_job_id(f"🚀 Scraping job started with ID: {JOB}."), JOB)
+        self.assertEqual(cli.parse_job_id(f"🔄 Refresh job started with ID: {JOB}."), JOB)
+
+    def test_job_status_is_lower_cased(self):
+        self.assertEqual(cli.job_status("- ID: x\n  Status: Running"), "running")
+        self.assertIsNone(cli.job_status("no status here"))
+
+    def test_scrape_wait_polls_until_completed(self):
+        tools = {"scrape_docs": started(), "get_job_info": statuses("queued", "running", "completed")}
+        with FakeMcpServer(tools) as server:
+            code, out, _ = run_cli(
+                "scrape", "react", "https://react.dev", "--wait", "--interval", "0", "--url", server.url
+            )
+        self.assertEqual(code, 0)
+        self.assertIn("Status: completed", out)
+        self.assertEqual(server.calls("get_job_info"), [{"jobId": JOB}] * 3)
+
+    def test_refresh_wait(self):
+        tools = {"refresh_version": started("Refresh"), "get_job_info": statuses("completed")}
+        with FakeMcpServer(tools) as server:
+            code, _, _ = run_cli("refresh", "react", "--wait", "--interval", "0", "--url", server.url)
+        self.assertEqual(code, 0)
+        self.assertEqual(server.calls("refresh_version"), [{"library": "react"}])
+
+    def test_scrape_without_wait_does_not_poll(self):
+        with FakeMcpServer({"scrape_docs": started(), "get_job_info": statuses("completed")}) as server:
+            code, _, _ = run_cli("scrape", "react", "https://react.dev", "--url", server.url)
+        self.assertEqual(code, 0)
+        self.assertEqual(server.calls("get_job_info"), [])
+
+    def test_failed_job_exits_1_with_job_info_on_stderr(self):
+        with FakeMcpServer({"get_job_info": statuses("running", "failed")}) as server:
+            code, out, err = run_cli("wait", JOB, "--interval", "0", "--url", server.url)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("Status: failed", err)
+
+    def test_cancelled_job_exits_1(self):
+        with FakeMcpServer({"get_job_info": statuses("cancelled")}) as server:
+            code, _, _ = run_cli("wait", JOB, "--interval", "0", "--url", server.url)
+        self.assertEqual(code, 1)
+
+    def test_wait_times_out_with_exit_4(self):
+        with FakeMcpServer({"get_job_info": statuses("running")}) as server:
+            code, _, err = run_cli("wait", JOB, "--timeout", "0.2", "--interval", "0.05", "--url", server.url)
+        self.assertEqual(code, 4)
+        self.assertIn("still running", err)
+
+    def test_scrape_wait_without_job_id_exits_3_and_shows_the_text(self):
+        tools = {"scrape_docs": lambda a: text_result("Scraping finished"), "get_job_info": statuses("completed")}
+        with FakeMcpServer(tools) as server:
+            code, _, err = run_cli("scrape", "react", "https://react.dev", "--wait", "--url", server.url)
+        self.assertEqual(code, 3)
+        self.assertIn("Scraping finished", err)
+        self.assertEqual(server.calls("get_job_info"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

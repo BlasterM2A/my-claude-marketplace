@@ -13,8 +13,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import ssl
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
@@ -23,6 +25,9 @@ from typing import TextIO
 VERSION = "0.1.0"
 PROTOCOL_VERSION = "2025-06-18"
 EXIT_OK, EXIT_TOOL, EXIT_USAGE, EXIT_CONNECTION, EXIT_TIMEOUT = 0, 1, 2, 3, 4
+TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
+JOB_ID_RE = re.compile(r"\bID:\s*([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})")
+STATUS_RE = re.compile(r"^\s*-?\s*Status:\s*(\w+)", re.MULTILINE)
 
 
 class CliError(Exception):
@@ -148,6 +153,13 @@ class McpClient:
         return self.request("tools/list").get("tools") or []
 
 
+def add_wait_options(parser: argparse.ArgumentParser, with_flag: bool) -> None:
+    if with_flag:
+        parser.add_argument("--wait", action="store_true", help="wait for the job to finish")
+    parser.add_argument("--timeout", type=float, default=1800.0, help="seconds to wait for the job (default: 1800)")
+    parser.add_argument("--interval", type=float, default=5.0, help="seconds between status checks (default: 5)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
@@ -197,9 +209,11 @@ def build_parser() -> argparse.ArgumentParser:
     scrape.add_argument("--scope", choices=["subpages", "hostname", "domain"])
     scrape.add_argument("--include", action="append", help="URL include pattern (repeatable)")
     scrape.add_argument("--exclude", action="append", help="URL exclude pattern (repeatable)")
+    add_wait_options(scrape, with_flag=True)
     refresh = command("refresh", "re-scrape an indexed library version, skipping unchanged pages")
     refresh.add_argument("library")
     refresh.add_argument("--version")
+    add_wait_options(refresh, with_flag=True)
     remove = command("remove", "delete an indexed library or version (destructive)")
     remove.add_argument("library")
     remove.add_argument("--version")
@@ -210,6 +224,9 @@ def build_parser() -> argparse.ArgumentParser:
     job.add_argument("job_id")
     cancel = command("cancel", "cancel a queued or running job")
     cancel.add_argument("job_id")
+    wait = command("wait", "wait for an indexing job to finish")
+    wait.add_argument("job_id")
+    add_wait_options(wait, with_flag=False)
     fetch = command("fetch", "fetch one URL as Markdown without indexing it")
     fetch.add_argument("source_url", metavar="URL")
     fetch.add_argument("--no-follow-redirects", action="store_true")
@@ -283,24 +300,66 @@ def print_tools(client: McpClient, as_json: bool, stdout: TextIO) -> None:
         print(f"{tool.get('name')}\t{lines[0] if lines else ''}", file=stdout)
 
 
+def parse_job_id(text: str) -> str:
+    """Extract the job id from a scrape_docs or refresh_version reply."""
+    match = JOB_ID_RE.search(text)
+    if not match:
+        raise CliError(EXIT_CONNECTION, f"no job id in the server reply: {text.strip() or '(empty)'}")
+    return match.group(1)
+
+
+def job_status(text: str) -> str | None:
+    """Extract the lower-cased status from a get_job_info reply."""
+    match = STATUS_RE.search(text)
+    return match.group(1).lower() if match else None
+
+
+def wait_for_job(client: McpClient, job_id: str, timeout: float, interval: float) -> tuple[str, dict, str]:
+    """Poll get_job_info until the job reaches a terminal status; returns (status, result, text)."""
+    deadline = time.monotonic() + timeout
+    while True:
+        result, text = client.call_tool("get_job_info", {"jobId": job_id})
+        if result.get("isError"):
+            raise CliError(EXIT_TOOL, text or f"get_job_info failed for job {job_id}")
+        status = job_status(text)
+        if status in TERMINAL_STATUSES:
+            return status, result, text
+        if time.monotonic() >= deadline:
+            raise CliError(EXIT_TIMEOUT, f"job {job_id} still {status or 'in an unknown state'} after {timeout:g}s")
+        time.sleep(interval)
+
+
+def report_wait(client: McpClient, job_id: str, args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:
+    status, result, text = wait_for_job(client, job_id, args.timeout, args.interval)
+    if status == "completed":
+        emit(result, text, getattr(args, "json", False), stdout)
+        return EXIT_OK
+    print(text, file=stderr)
+    return EXIT_TOOL
+
+
 def run(args: argparse.Namespace, env: Mapping[str, str], stdout: TextIO, stderr: TextIO) -> int:
     as_json = getattr(args, "json", False)
-    call = None if args.command == "tools" else tool_call_for(args)
+    call = None if args.command in ("tools", "wait") else tool_call_for(args)
     url = resolve_url(getattr(args, "url", None), env)
     insecure = getattr(args, "insecure", False)
     if insecure:
         print("docs-mcp: warning: TLS certificate verification is disabled (--insecure)", file=stderr)
     client = McpClient(url, insecure=insecure)
     client.initialize()
-    if call is None:
+    if args.command == "tools":
         print_tools(client, as_json, stdout)
         return EXIT_OK
+    if args.command == "wait":
+        return report_wait(client, args.job_id, args, stdout, stderr)
     name, arguments = call
     result, text = client.call_tool(name, arguments)
     if result.get("isError"):
         print(text or f"{name} failed", file=stderr)
         return EXIT_TOOL
     emit(result, text, as_json, stdout)
+    if getattr(args, "wait", False):
+        return report_wait(client, parse_job_id(text), args, stdout, stderr)
     return EXIT_OK
 
 
