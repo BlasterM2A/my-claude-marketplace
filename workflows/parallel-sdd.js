@@ -91,6 +91,31 @@ const SETUP_SCHEMA = {
   required: ['ok', 'lanes', 'error'],
 }
 
+const NEW_TASK = {
+  type: 'object',
+  properties: {
+    title: { type: 'string' },
+    files: { type: 'array', items: { type: 'string' } },
+    deps: { type: 'array', items: { type: 'string' } },
+    risk: { type: 'string', enum: ['low', 'high'] },
+    tier: { type: 'string', enum: ['fast', 'standard'] },
+    brief_path: { type: 'string' },
+  },
+  required: ['title', 'files', 'deps', 'risk', 'tier', 'brief_path'],
+}
+const PLANNER_SCHEMA = {
+  type: 'object',
+  properties: {
+    action: { type: 'string', enum: ['ruling', 'block', 'add_task', 'adapt', 'backlog'] },
+    ruling: { type: 'string' },
+    affects: { type: 'array', items: { type: 'string' } },
+    reason: { type: 'string' },
+    rework: { type: 'boolean' },
+    new_task: { anyOf: [NEW_TASK, { type: 'null' }] },
+  },
+  required: ['action', 'ruling', 'affects', 'reason', 'rework', 'new_task'],
+}
+
 // ---------- state ----------
 const tasks = new Map()     // id -> task
 const order = []            // plan order, then added tasks
@@ -106,6 +131,9 @@ const backlog = []
 const events = []
 const runs = []
 let plannerChain = Promise.resolve()
+let signalNo = 0
+let newTaskCount = 0
+const newTaskCap = Math.min(3, Math.ceil(0.3 * A.graph.tasks.length))
 
 function deferred() {
   let resolve
@@ -225,9 +253,110 @@ function cleanupPrompt(keep) {
   ].join('\n')
 }
 
+function graphSummary() {
+  return order.map(id => {
+    const t = tasks.get(id)
+    return `- ${id} [${state[id]}] "${t.title}" deps=[${t.deps.join(', ')}] files=[${t.files.join(', ')}]`
+  }).join('\n')
+}
+
+function plannerPrompt(s, from, n) {
+  const nextId = `N${newTaskCount + 1}`
+  return [
+    `You are the planner of a parallel plan run (signal S${n}). Plan: ${A.plan}. Spec: ${A.spec}. Workspace: ${WS}. ${CWD_RULE}`,
+    `Signal from ${from}: type=${s.type}, affects=[${s.affects.join(', ')}]`,
+    `Detail: ${s.detail}`,
+    'Current task graph:',
+    graphSummary(),
+    `Read ${WS}/decisions.md if it exists. Decide ONE action:`,
+    '- ruling: answerable from the plan/spec. Set rework=true only if the ruling invalidates work already committed by a RUNNING task listed in affects.',
+    '- block: needs the user (spec or scope change); affects = the pending/running tasks to stop.',
+    `- add_task: a task required for the plan to work. Write its brief to ${WS}/${nextId}-brief.md in the plan's task format (files, interfaces, TDD steps) and set new_task.brief_path to it.`,
+    `- adapt: an accepted interface change that already-merged tasks must follow; same as add_task (brief at ${WS}/${nextId}-brief.md).`,
+    '- backlog: an improvement or out-of-scope work; fill new_task with a title and a one-line brief_path note, do not write a brief.',
+    `Append your decision to ${WS}/decisions.md as a section "## S${n} (${from})" with the ruling and its reason. Never edit other files.`,
+  ].join('\n')
+}
+
+function checkpointPrompt(ids, n) {
+  const head = mergeSha[ids[ids.length - 1]]
+  return [
+    `You run integration checkpoint ${n} of a parallel plan run. Read-only. Plan: ${A.plan}. Spec: ${A.spec}. ${CWD_RULE}`,
+    `1. Run from ${A.repo}: ${SDD}/scripts/review-package ${A.plan} ${mergeSha[ids[0]]}^1 ${head} ${WS}/checkpoint-${n}.diff`,
+    `2. The range holds the merges of ${ids.join(', ')}. Read it with ${WS}/decisions.md if it exists.`,
+    '3. Judge cross-task coherence only: duplicated helpers, inconsistent contracts between modules, drifting conventions. Per-task correctness was already reviewed.',
+    'Return verdict, findings, declined and signals.',
+  ].join('\n')
+}
+
 // ---------- task pipeline ----------
 function collect(by, result) {
   for (const text of result.rulings || []) rulings.push({ by, text })
+  for (const s of result.signals || []) runs.push(planSignal(s, by))
+}
+
+function onMerged(id) {
+  mergedOrder.push(id)
+  if (mergedOrder.length % CHECKPOINT_EVERY === 0) {
+    runs.push(checkpoint(mergedOrder.slice(-CHECKPOINT_EVERY), mergedOrder.length / CHECKPOINT_EVERY))
+  }
+}
+
+async function checkpoint(ids, n) {
+  const r = await agent(checkpointPrompt(ids, n), {
+    label: `checkpoint·${n}`, phase: 'Merge queue', agentType: AG.reviewer, schema: REVIEW_SCHEMA,
+  })
+  if (!r) { events.push({ checkpoint: n, note: 'checkpoint reviewer returned no result' }); return }
+  events.push({ checkpoint: n, tasks: ids, verdict: r.verdict, findings: r.findings.length })
+  collect(`checkpoint·${n}`, r)
+  for (const f of r.findings.filter(f => f.severity !== 'Minor')) {
+    runs.push(planSignal({ type: 'gap', affects: ids, detail: `${f.severity}: ${f.detail}${f.file ? ` (${f.file})` : ''}` }, `checkpoint·${n}`))
+  }
+}
+
+function planSignal(s, from) {
+  const n = ++signalNo
+  const p = plannerChain.then(() => handleSignal(s, from, n))
+  plannerChain = p.catch(() => {})
+  return p
+}
+
+async function handleSignal(s, from, n) {
+  const by = `planner·S${n}`
+  const d = await agent(plannerPrompt(s, from, n), { label: by, phase: 'Planner', agentType: AG.planner, schema: PLANNER_SCHEMA })
+  if (!d) { events.push({ signal: n, from, note: 'planner returned no result' }); return }
+  events.push({ signal: n, from, action: d.action, reason: d.reason })
+  if (d.ruling) rulings.push({ by, text: d.ruling })
+  if (d.action === 'ruling' && d.rework) {
+    for (const id of d.affects) if (state[id] === 'running') tasks.get(id).rework = d.ruling
+  }
+  if (d.action === 'block') for (const id of d.affects) blockTask(id, `needs user decision (${by}): ${d.reason}`)
+  if ((d.action === 'add_task' || d.action === 'adapt') && d.new_task) addNewTask(d.new_task, by)
+  if (d.action === 'backlog' && d.new_task) backlog.push({ from: by, title: d.new_task.title, reason: d.reason })
+}
+
+function blockTask(id, reason) {
+  if (!tasks.has(id)) return
+  if (state[id] === 'pending') finish(id, 'blocked', reason)
+  else if (state[id] === 'running') tasks.get(id).blockReason = reason
+  else events.push({ task: id, note: `block requested but the task is ${state[id]}: ${reason}` })
+}
+
+function addNewTask(nt, by) {
+  if (newTaskCount >= newTaskCap) {
+    backlog.push({ from: by, title: nt.title, reason: 'new-task cap reached' })
+    log(`[orchestrator] new-task cap (${newTaskCap}) reached; "${nt.title}" → backlog`)
+    return
+  }
+  const id = `N${++newTaskCount}`
+  const deps = nt.deps.filter(d => tasks.has(d))
+  for (const other of order) {
+    const active = state[other] === 'pending' || state[other] === 'running'
+    if (active && !deps.includes(other) && tasks.get(other).files.some(f => nt.files.includes(f))) deps.push(other)
+  }
+  addTask({ id, title: nt.title, deps, files: nt.files, risk: nt.risk, tier: nt.tier, rationale: `added by ${by}`, brief: nt.brief_path })
+  log(`[orchestrator] ${by} added ${id} "${nt.title}" deps=[${deps.join(', ')}]`)
+  runs.push(runTask(id))
 }
 
 async function reviewTask(t, tag, scoped) {
@@ -303,10 +432,6 @@ function finish(id, st, reason) {
   return st
 }
 
-function onMerged(id) {
-  mergedOrder.push(id)
-}
-
 async function runTask(id) {
   const t = tasks.get(id)
   if (!(await depsMerged(t))) {
@@ -321,6 +446,14 @@ async function runTask(id) {
   try {
     const done = await implementAndReview(t, lane)
     if (!done.ok) return finish(id, 'blocked', done.reason)
+    if (t.rework) {
+      const ruling = t.rework
+      t.rework = null
+      const fix = await fixRound(t, lane, [{ severity: 'Important', detail: `Apply the planner ruling: ${ruling}` }], 'ruling', 1)
+      if (!fix.ok) return finish(id, 'blocked', fix.reason)
+      const review = await reviewTask(t, 're-review-ruling', true)
+      if (!review || review.verdict !== 'approved') return finish(id, 'blocked', 'fix for a planner ruling was not approved')
+    }
     if (t.blockReason) return finish(id, 'blocked', t.blockReason)
     const merged = await mergeTask(t, lane)
     return merged.ok ? finish(id, 'merged') : finish(id, 'blocked', merged.reason)
