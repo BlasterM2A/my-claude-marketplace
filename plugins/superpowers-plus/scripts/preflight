@@ -33,7 +33,11 @@ else
   errors+=("no such plan file: $plan")
 fi
 
-newest_in() { local v; v=$(ls "$1" 2>/dev/null | sort -V | tail -1 || true); [ -z "$v" ] || echo "$1/$v"; }
+newest_in() {
+  local v
+  v=$(find "$1" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -V | tail -1 || true)
+  [ -z "$v" ] || echo "$1/$v"
+}
 
 # The active install: a project/local install for this repo, else the user install. Fall back to the newest cached version.
 sp_path=

@@ -15,8 +15,15 @@ tasks:
 
   validate:
     desc: Validate the marketplace catalog and every plugin manifest
+    silent: true
     cmds:
-      - claude plugin validate .
+      # A version mismatch between plugin.json and its catalog entry is only a warning upstream; treat it as an error.
+      - |
+        out=$(claude plugin validate . 2>&1) || { echo "$out"; exit 1; }
+        echo "$out"
+        if echo "$out" | grep -q 'Entry declares version'; then
+          echo "task validate: a plugin.json version differs from its marketplace.json entry" >&2; exit 1
+        fi
       - for: { var: PLUGINS }
         cmd: claude plugin validate {{.ITEM}}
 

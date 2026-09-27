@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Set a plugin's version in its plugin.json, its marketplace.json entry and the README plugins table.
+#
+# Usage: bump-version PLUGIN VERSION   (run from the marketplace root)
+set -euo pipefail
+
+[ $# -eq 2 ] || { sed -n '4p' "$0" >&2; exit 2; }
+plugin=$1; version=$2
+manifest=plugins/$plugin/.claude-plugin/plugin.json
+catalog=.claude-plugin/marketplace.json
+
+[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "error: $version is not a semantic version" >&2; exit 1; }
+[ -f "$manifest" ] || { echo "error: no plugin manifest at $manifest" >&2; exit 1; }
+jq -e --arg p "$plugin" 'any(.plugins[]; .name == $p)' "$catalog" >/dev/null ||
+  { echo "error: $plugin has no entry in $catalog" >&2; exit 1; }
+grep -q "^| \[$plugin\](plugins/$plugin) | " README.md || { echo "error: no README table row for $plugin" >&2; exit 1; }
+
+old=$(jq -r .version "$manifest")
+tmp=$(mktemp)
+jq --arg v "$version" '.version = $v' "$manifest" >"$tmp" && mv "$tmp" "$manifest"
+jq --arg p "$plugin" --arg v "$version" '(.plugins[] | select(.name == $p) | .version) = $v' "$catalog" >"$tmp" && mv "$tmp" "$catalog"
+sed -i -E "s#^(\| \[$plugin\]\(plugins/$plugin\) \| )[^|]+( \|)#\1$version\2#" README.md
+echo "$plugin: $old -> $version"
