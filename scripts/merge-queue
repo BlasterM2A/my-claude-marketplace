@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Merge approved task branches into the plan branch as one batch, run the
+# project's full test suite, and bisect the batch when it goes red. Only this
+# script appends task completions to the SDD ledger (single writer).
+#
+# Usage: merge-queue batch REPO PLAN_BRANCH LEDGER TEST_CMD TASK_ID=BRANCH...
+# Prints: {"merged":[{"task","sha"}],"conflicts":[ids],"culprits":[ids],
+#          "tests_passed":bool,"test_log":path}
+# A conflicting task is left out; a culprit is a task whose merge turns the
+# suite red, and its merge is undone.
+set -euo pipefail
+
+if [ "${1:-}" != batch ] || [ $# -lt 6 ]; then sed -n '6,11p' "$0" >&2; exit 2; fi
+repo=$2; plan_branch=$3; ledger=$4; test_cmd=$5
+shift 5
+
+cd "$repo"
+[ "$(git branch --show-current)" = "$plan_branch" ] || { echo "repo is not on $plan_branch" >&2; exit 2; }
+# An interrupted earlier run can leave a merge in progress.
+if git rev-parse -q --verify MERGE_HEAD >/dev/null; then git merge --abort; fi
+[ -z "$(git status --porcelain --untracked-files=no)" ] ||
+  { echo "plan checkout has uncommitted changes" >&2; exit 3; }
+
+mkdir -p "$(dirname "$ledger")"
+test_log="$(dirname "$ledger")/merge-$(git rev-parse --short HEAD).log"
+conflicts=(); culprits=(); kept=()
+
+merge_one() { # ID BRANCH -> 0 merged (or already merged), 1 conflict
+  if git merge --no-ff --quiet -m "Merge $1 ($2)" "$2" >/dev/null 2>&1; then return 0; fi
+  git merge --abort
+  return 1
+}
+run_tests() { echo "== $(git rev-parse --short HEAD)" >>"$test_log"; bash -c "$test_cmd" >>"$test_log" 2>&1; }
+
+pre=$(git rev-parse HEAD)
+batch=()
+for spec in "$@"; do
+  if merge_one "${spec%%=*}" "${spec#*=}"; then batch+=("$spec"); else conflicts+=("${spec%%=*}"); fi
+done
+
+tests_passed=true
+if [ ${#batch[@]} -gt 0 ]; then
+  if run_tests; then
+    kept=("${batch[@]}")
+  else
+    # Bisect: replay the batch one merge at a time, testing after each.
+    git reset --quiet --hard "$pre"
+    for spec in "${batch[@]}"; do
+      merge_one "${spec%%=*}" "${spec#*=}" || { conflicts+=("${spec%%=*}"); continue; }
+      if run_tests; then
+        kept+=("$spec")
+      else
+        culprits+=("${spec%%=*}")
+        git reset --quiet --hard HEAD^1
+      fi
+    done
+  fi
+fi
+
+merged='[]'
+for spec in "${kept[@]}"; do
+  id=${spec%%=*}; branch=${spec#*=}
+  sha=$(git log -1 --merges --format=%H --grep="^Merge $id (")
+  n=${id#T}
+  grep -q "^Task $n: complete" "$ledger" 2>/dev/null || echo "Task $n: complete (merge ${sha:0:7}, $branch)" >>"$ledger"
+  merged=$(jq -c --arg t "$id" --arg s "$sha" '. + [{task: $t, sha: $s}]' <<<"$merged")
+done
+
+to_json() { if [ $# -eq 0 ]; then echo '[]'; else printf '%s\n' "$@" | jq -R . | jq -sc .; fi; }
+jq -nc --argjson merged "$merged" --argjson conflicts "$(to_json "${conflicts[@]}")" \
+  --argjson culprits "$(to_json "${culprits[@]}")" --argjson passed "$tests_passed" --arg log "$test_log" \
+  '{merged: $merged, conflicts: $conflicts, culprits: $culprits, tests_passed: $passed, test_log: $log}'
