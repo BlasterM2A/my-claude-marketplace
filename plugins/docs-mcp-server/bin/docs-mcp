@@ -1,0 +1,320 @@
+#!/usr/bin/env python3
+"""docs-mcp: command-line client for a remote docs-mcp-server.
+
+Speaks MCP Streamable HTTP to the server's /mcp endpoint using only the Python standard library.
+The endpoint is the first non-empty value of --url, DOCS_MCP_URL and CLAUDE_PLUGIN_OPTION_URL.
+
+Exit codes: 0 success, 1 the server reported an error, 2 usage error or no endpoint,
+3 connection, TLS or protocol error, 4 timed out waiting for a job.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import ssl
+import sys
+import urllib.error
+import urllib.request
+from collections.abc import Mapping
+from typing import TextIO
+
+VERSION = "0.1.0"
+PROTOCOL_VERSION = "2025-06-18"
+EXIT_OK, EXIT_TOOL, EXIT_USAGE, EXIT_CONNECTION, EXIT_TIMEOUT = 0, 1, 2, 3, 4
+
+
+class CliError(Exception):
+    """An error that ends the command with a specific exit code."""
+
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def resolve_url(cli_url: str | None, env: Mapping[str, str]) -> str:
+    """Return the first non-empty endpoint from --url, DOCS_MCP_URL and CLAUDE_PLUGIN_OPTION_URL."""
+    for value in (cli_url, env.get("DOCS_MCP_URL"), env.get("CLAUDE_PLUGIN_OPTION_URL")):
+        if value and value.strip():
+            url = value.strip()
+            if not url.startswith(("http://", "https://")):
+                raise CliError(EXIT_USAGE, f"server URL must start with http:// or https://: {url}")
+            return url
+    raise CliError(EXIT_USAGE, "no server URL: pass --url, or set DOCS_MCP_URL or CLAUDE_PLUGIN_OPTION_URL")
+
+
+def parse_reply(body: str, content_type: str, request_id: int) -> dict:
+    """Find the JSON-RPC response to request_id in a JSON or text/event-stream body."""
+    if "text/event-stream" in content_type:
+        payloads: list[str] = []
+        data: list[str] = []
+        for line in body.splitlines():
+            if line.startswith("data:"):
+                data.append(line[5:].removeprefix(" "))
+            elif not line.strip() and data:
+                payloads.append("\n".join(data))
+                data = []
+        if data:
+            payloads.append("\n".join(data))
+    else:
+        payloads = [body]
+    for payload in payloads:
+        try:
+            message = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(message, dict)
+            and message.get("id") == request_id
+            and ("result" in message or "error" in message)
+        ):
+            return message
+    kind = content_type or "no content type"
+    raise CliError(EXIT_CONNECTION, f"no JSON-RPC response to request {request_id} in the server reply ({kind})")
+
+
+class McpClient:
+    """Minimal MCP Streamable HTTP client: initialize once, then JSON-RPC requests on the same session."""
+
+    def __init__(self, url: str, insecure: bool = False, timeout: float = 120.0) -> None:
+        self.url = url
+        self.timeout = timeout
+        self.session_id: str | None = None
+        self.protocol_version: str | None = None
+        self._last_id = 0
+        # None keeps Python's default verification, which honours SSL_CERT_FILE and SSL_CERT_DIR.
+        self._ssl_context: ssl.SSLContext | None = None
+        if insecure:
+            self._ssl_context = ssl.create_default_context()
+            self._ssl_context.check_hostname = False
+            self._ssl_context.verify_mode = ssl.CERT_NONE
+
+    def _post(self, message: dict) -> tuple[str, str]:
+        headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+        if self.session_id:
+            headers["Mcp-Session-Id"] = self.session_id
+        if self.protocol_version:
+            headers["MCP-Protocol-Version"] = self.protocol_version
+        request = urllib.request.Request(self.url, data=json.dumps(message).encode(), headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout, context=self._ssl_context) as response:
+                self.session_id = response.headers.get("Mcp-Session-Id") or self.session_id
+                return response.read().decode("utf-8"), response.headers.get("Content-Type", "")
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode("utf-8", "replace").strip()[:200]
+            raise CliError(EXIT_CONNECTION, f"{self.url}: HTTP {error.code} {error.reason} {detail}".rstrip()) from None
+        except (urllib.error.URLError, OSError) as error:
+            reason = getattr(error, "reason", error)
+            raise CliError(EXIT_CONNECTION, f"{self.url}: {reason}") from None
+
+    def request(self, method: str, params: dict | None = None) -> dict:
+        """Send one JSON-RPC request and return its result; JSON-RPC errors raise CliError(EXIT_TOOL)."""
+        self._last_id += 1
+        request_id = self._last_id
+        message: dict = {"jsonrpc": "2.0", "id": request_id, "method": method}
+        if params is not None:
+            message["params"] = params
+        body, content_type = self._post(message)
+        reply = parse_reply(body, content_type, request_id)
+        if "error" in reply:
+            error = reply["error"] or {}
+            detail = error.get("message", error) if isinstance(error, dict) else error
+            raise CliError(EXIT_TOOL, f"{method} failed: {detail}")
+        return reply.get("result") or {}
+
+    def initialize(self) -> dict:
+        params = {
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "docs-mcp", "version": VERSION},
+        }
+        result = self.request("initialize", params)
+        self.protocol_version = result.get("protocolVersion") or PROTOCOL_VERSION
+        self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        return result
+
+    def call_tool(self, name: str, arguments: dict) -> tuple[dict, str]:
+        """Call a tool; returns the raw result and its text content joined by newlines."""
+        result = self.request("tools/call", {"name": name, "arguments": arguments})
+        content = result.get("content") or []
+        text = "\n".join(item.get("text", "") for item in content if item.get("type") == "text")
+        return result, text
+
+    def list_tools(self) -> list[dict]:
+        return self.request("tools/list").get("tools") or []
+
+
+def build_parser() -> argparse.ArgumentParser:
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--url",
+        default=argparse.SUPPRESS,
+        help="MCP endpoint (default: $DOCS_MCP_URL, then $CLAUDE_PLUGIN_OPTION_URL)",
+    )
+    common.add_argument(
+        "--insecure",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="disable TLS certificate verification",
+    )
+    common.add_argument(
+        "--json",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="print the raw JSON result instead of its text",
+    )
+    parser = argparse.ArgumentParser(
+        prog="docs-mcp", parents=[common], description="Command-line client for a remote docs-mcp-server."
+    )
+    commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+
+    def command(name: str, help_text: str) -> argparse.ArgumentParser:
+        return commands.add_parser(name, parents=[common], help=help_text, description=help_text)
+
+    command("tools", "list the server's tools")
+    call = command("call", "call any tool with JSON arguments")
+    call.add_argument("tool")
+    call.add_argument("arguments", nargs="?", default="{}", help="JSON object (default: {})")
+    command("libraries", "list indexed libraries")
+    versions = command("versions", "find the best matching version of a library")
+    versions.add_argument("library")
+    versions.add_argument("--target", help="version or X-range to match")
+    search = command("search", "search a library's documentation")
+    search.add_argument("library")
+    search.add_argument("query")
+    search.add_argument("--version")
+    search.add_argument("--limit", type=int)
+    scrape = command("scrape", "index documentation from a URL (replaces that library version)")
+    scrape.add_argument("library")
+    scrape.add_argument("source_url", metavar="URL")
+    scrape.add_argument("--version")
+    scrape.add_argument("--max-pages", type=int)
+    scrape.add_argument("--max-depth", type=int)
+    scrape.add_argument("--scope", choices=["subpages", "hostname", "domain"])
+    scrape.add_argument("--include", action="append", help="URL include pattern (repeatable)")
+    scrape.add_argument("--exclude", action="append", help="URL exclude pattern (repeatable)")
+    refresh = command("refresh", "re-scrape an indexed library version, skipping unchanged pages")
+    refresh.add_argument("library")
+    refresh.add_argument("--version")
+    remove = command("remove", "delete an indexed library or version (destructive)")
+    remove.add_argument("library")
+    remove.add_argument("--version")
+    remove.add_argument("--yes", action="store_true", help="confirm the deletion")
+    jobs = command("jobs", "list indexing jobs")
+    jobs.add_argument("--status", choices=["queued", "running", "completed", "failed", "cancelling", "cancelled"])
+    job = command("job", "show one indexing job")
+    job.add_argument("job_id")
+    cancel = command("cancel", "cancel a queued or running job")
+    cancel.add_argument("job_id")
+    fetch = command("fetch", "fetch one URL as Markdown without indexing it")
+    fetch.add_argument("source_url", metavar="URL")
+    fetch.add_argument("--no-follow-redirects", action="store_true")
+    return parser
+
+
+def compact(arguments: dict) -> dict:
+    """Drop arguments the user did not set, so the server applies its own defaults."""
+    return {key: value for key, value in arguments.items() if value is not None}
+
+
+def tool_call_for(args: argparse.Namespace) -> tuple[str, dict]:
+    """Map a parsed command to the MCP tool it calls and that tool's arguments."""
+    command = args.command
+    if command == "call":
+        try:
+            arguments = json.loads(args.arguments)
+        except json.JSONDecodeError as error:
+            raise CliError(EXIT_USAGE, f"arguments are not valid JSON: {error}") from None
+        if not isinstance(arguments, dict):
+            raise CliError(EXIT_USAGE, "arguments must be a JSON object")
+        return args.tool, arguments
+    if command == "libraries":
+        return "list_libraries", {}
+    if command == "versions":
+        return "find_version", compact({"library": args.library, "targetVersion": args.target})
+    if command == "search":
+        arguments = {"library": args.library, "query": args.query, "version": args.version, "limit": args.limit}
+        return "search_docs", compact(arguments)
+    if command == "scrape":
+        arguments = {
+            "library": args.library,
+            "url": args.source_url,
+            "version": args.version,
+            "maxPages": args.max_pages,
+            "maxDepth": args.max_depth,
+            "scope": args.scope,
+            "includePatterns": args.include,
+            "excludePatterns": args.exclude,
+        }
+        return "scrape_docs", compact(arguments)
+    if command == "refresh":
+        return "refresh_version", compact({"library": args.library, "version": args.version})
+    if command == "remove":
+        if not args.yes:
+            target = f"{args.library}@{args.version}" if args.version else args.library
+            raise CliError(EXIT_USAGE, f"refusing to remove {target}: pass --yes to confirm")
+        return "remove_docs", compact({"library": args.library, "version": args.version})
+    if command == "jobs":
+        return "list_jobs", compact({"status": args.status})
+    if command == "job":
+        return "get_job_info", {"jobId": args.job_id}
+    if command == "cancel":
+        return "cancel_job", {"jobId": args.job_id}
+    if command == "fetch":
+        return "fetch_url", {"url": args.source_url, "followRedirects": not args.no_follow_redirects}
+    raise CliError(EXIT_USAGE, f"unknown command: {command}")
+
+
+def emit(result: dict, text: str, as_json: bool, stdout: TextIO) -> None:
+    print(json.dumps(result, indent=2, ensure_ascii=False) if as_json else text, file=stdout)
+
+
+def print_tools(client: McpClient, as_json: bool, stdout: TextIO) -> None:
+    tools = client.list_tools()
+    if as_json:
+        print(json.dumps(tools, indent=2, ensure_ascii=False), file=stdout)
+        return
+    for tool in tools:
+        lines = (tool.get("description") or "").strip().splitlines()
+        print(f"{tool.get('name')}\t{lines[0] if lines else ''}", file=stdout)
+
+
+def run(args: argparse.Namespace, env: Mapping[str, str], stdout: TextIO, stderr: TextIO) -> int:
+    as_json = getattr(args, "json", False)
+    call = None if args.command == "tools" else tool_call_for(args)
+    url = resolve_url(getattr(args, "url", None), env)
+    insecure = getattr(args, "insecure", False)
+    if insecure:
+        print("docs-mcp: warning: TLS certificate verification is disabled (--insecure)", file=stderr)
+    client = McpClient(url, insecure=insecure)
+    client.initialize()
+    if call is None:
+        print_tools(client, as_json, stdout)
+        return EXIT_OK
+    name, arguments = call
+    result, text = client.call_tool(name, arguments)
+    if result.get("isError"):
+        print(text or f"{name} failed", file=stderr)
+        return EXIT_TOOL
+    emit(result, text, as_json, stdout)
+    return EXIT_OK
+
+
+def main(argv=None, env=None, stdout=None, stderr=None) -> int:
+    env = os.environ if env is None else env
+    stdout = sys.stdout if stdout is None else stdout
+    stderr = sys.stderr if stderr is None else stderr
+    try:
+        args = build_parser().parse_args(argv)
+    except SystemExit as exit_request:
+        return exit_request.code if isinstance(exit_request.code, int) else EXIT_USAGE
+    try:
+        return run(args, env, stdout, stderr)
+    except CliError as error:
+        print(f"docs-mcp: {error}", file=stderr)
+        return error.code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
