@@ -33,7 +33,7 @@ docs-mcp remove web-react --version 18.3.1 --yes
 docs-mcp --help
 ```
 
-The endpoint is the first non-empty value of `--url`, `DOCS_MCP_URL` and `CLAUDE_PLUGIN_OPTION_URL`. Exit codes: 0 success, 1 server error or failed job, 2 usage error or no URL, 3 connection/TLS/protocol error, 4 timed out waiting.
+The endpoint is the first non-empty value of `--url`, `DOCS_MCP_URL` and `CLAUDE_PLUGIN_OPTION_URL`. Exit codes: 0 success, 1 server error or failed job, 2 usage error or no or malformed URL, 3 connection/TLS/protocol error, 4 timed out waiting.
 
 ## Things to know about the server
 
