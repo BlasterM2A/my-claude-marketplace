@@ -40,8 +40,13 @@ class SkillTest(unittest.TestCase):
         self.assertEqual(self.meta["name"], "shared-docs")
         self.assertGreater(len(self.meta["description"]), 80)
 
-    def test_cli_calls_let_the_variable_override_the_saved_url(self):
-        self.assertIn('DOCS_MCP_URL="${DOCS_MCP_URL:-${user_config.url}}" docs-mcp', self.body)
+    def test_cli_calls_rely_on_the_clis_own_url_resolution(self):
+        # Unlike the mcpServers "url" field, Claude Code does not substitute
+        # ${user_config.url} inside skill body text, so the skill must not
+        # rely on that placeholder here; the CLI already falls back from
+        # --url to DOCS_MCP_URL to CLAUDE_PLUGIN_OPTION_URL on its own.
+        self.assertNotIn("user_config", self.body)
+        self.assertIn("docs-mcp libraries", self.body)
 
     def test_removal_needs_an_explicit_request(self):
         self.assertIn("remove_docs", self.body)

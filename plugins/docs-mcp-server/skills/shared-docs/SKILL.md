@@ -25,12 +25,12 @@ The `docs-mcp-server` tools (`mcp__plugin_docs-mcp-server_docs-mcp-server__*`) w
 
 ## The `docs-mcp` command
 
-For a single lookup use the MCP tools. Use the `docs-mcp` command (on the `PATH` while this plugin is enabled) for loops over many libraries or URLs, for waiting on jobs, and from scripts or other skills. Always run it in this form, so a `DOCS_MCP_URL` set in the environment wins over the URL saved in the plugin's settings, exactly as for the MCP connection:
+For a single lookup use the MCP tools. Use the `docs-mcp` command (on the `PATH` while this plugin is enabled) for loops over many libraries or URLs, for waiting on jobs, and from scripts or other skills. It resolves its endpoint the same way as the MCP connection — `--url`, then `DOCS_MCP_URL`, then the URL saved in the plugin's settings — so plain calls already pick it up:
 
 ```bash
-DOCS_MCP_URL="${DOCS_MCP_URL:-${user_config.url}}" docs-mcp libraries
-DOCS_MCP_URL="${DOCS_MCP_URL:-${user_config.url}}" docs-mcp search web-react "useEffect cleanup" --version 19.x
-DOCS_MCP_URL="${DOCS_MCP_URL:-${user_config.url}}" docs-mcp scrape web-react https://react.dev/reference --version 19.0.0 --max-pages 300 --wait
+docs-mcp libraries
+docs-mcp search web-react "useEffect cleanup" --version 19.x
+docs-mcp scrape web-react https://react.dev/reference --version 19.0.0 --max-pages 300 --wait
 ```
 
 | Command | Does |
