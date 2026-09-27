@@ -13,7 +13,7 @@ claude plugin install <plugin>@blasterm2a
 
 | Plugin | Version | Description |
 |:---|:---|:---|
-| [superpowers-plus](plugins/superpowers-plus) | 0.3.0 | Execute approved [Superpowers](https://github.com/obra/superpowers) plans in parallel lane worktrees with a serialized merge queue. |
+| [superpowers-plus](plugins/superpowers-plus) | 0.3.1 | Execute approved [Superpowers](https://github.com/obra/superpowers) plans in parallel lane worktrees with a serialized merge queue. |
 
 ### superpowers-plus
 
