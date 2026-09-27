@@ -1,0 +1,16 @@
+version: '3'
+
+tasks:
+  test:
+    desc: Run all tests
+    cmds:
+      - task: test:bash
+      - task: test:node
+  test:bash:
+    desc: Run bats tests for the shell scripts
+    cmds:
+      - bats test/
+  test:node:
+    desc: Run node tests for the graph validator and the workflow
+    cmds:
+      - node --test "test/**/*.test.mjs"
