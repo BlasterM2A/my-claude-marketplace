@@ -30,5 +30,27 @@ class ManifestTest(unittest.TestCase):
         self.assertEqual(server, {"type": "http", "url": "${DOCS_MCP_URL:-${user_config.url}}"})
 
 
+class SkillTest(unittest.TestCase):
+    def setUp(self):
+        self.text = (ROOT / "skills" / "shared-docs" / "SKILL.md").read_text()
+        _, frontmatter, self.body = self.text.split("---\n", 2)
+        self.meta = dict(line.split(": ", 1) for line in frontmatter.strip().splitlines())
+
+    def test_frontmatter(self):
+        self.assertEqual(self.meta["name"], "shared-docs")
+        self.assertGreater(len(self.meta["description"]), 80)
+
+    def test_cli_calls_let_the_variable_override_the_saved_url(self):
+        self.assertIn('DOCS_MCP_URL="${DOCS_MCP_URL:-${user_config.url}}" docs-mcp', self.body)
+
+    def test_removal_needs_an_explicit_request(self):
+        self.assertIn("remove_docs", self.body)
+        self.assertIn("unless the user", self.body)
+
+    def test_documents_how_the_server_fetches_content(self):
+        for phrase in ("replaces", "file://", "Content-Type", "application/octet-stream", ".zip"):
+            self.assertIn(phrase, self.body)
+
+
 if __name__ == "__main__":
     unittest.main()
