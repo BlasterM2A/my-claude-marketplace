@@ -15,8 +15,9 @@ Status: Draft for review
 - Use the existing `sp-*` agents (`~/.claude/agents/`) for model/effort routing.
 - Worktrees live under `.worktrees/` at the repo root (global convention).
 - Never push, never merge into the default branch; integration into main stays with `superpowers:finishing-a-development-branch`.
+- Agent Teams stays enabled on this machine (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`). A subagent spawned *from the main conversation* with `name` launches as a teammate (inherits the lead's effort, runs in the main working directory). The skill therefore never passes `name` when dispatching from the main session; Workflow agents and subagents spawned by other subagents are unaffected.
 
-**Out of scope (possible phase 2):** Paseo-based parallelism across whole plans or repos; Agent Teams; contributing upstream (obra/superpowers #469, #1835).
+**Out of scope (possible phase 2):** Paseo-based parallelism across whole plans or repos; Agent Teams as the execution backbone (it is measured as benchmark arm C, §8); contributing upstream (obra/superpowers #469, #1835).
 
 ## 2. Chosen approach
 
@@ -24,7 +25,7 @@ A skill (`parallel-plan-execution`) prepares the run and hands a dependency grap
 
 Rejected alternatives:
 - *Parallel `Agent` calls from `sp-orchestrator`*: controller context grows with every report, no resume, parallelism depends on model discretion.
-- *Agent Teams*: experimental, full-context cost per teammate, documented file-overwrite risk, no concurrency cap or resume.
+- *Agent Teams*: its docs state that for "sequential tasks, same-file edits, or work with many dependencies" subagents are more effective. Teammates run in the main working directory (per-call `isolation` turns the spawn into a plain subagent), inherit the lead's effort, report every final answer into the lead's (main session's) context, and in-process teammates are not restored on resume. Its strengths (native task dependencies, `TaskCompleted`/`TaskCreated` hooks, direct messaging) are covered here by the signal/planner design (§5.1) and measured in benchmark arm C.
 - *Wave-based Workflow* (earlier draft): a wave barrier makes one slow task stall the next wave; per-agent ephemeral worktrees reinstall dependencies and fight `worktree.baseRef: "fresh"`.
 
 ## 3. Components
@@ -36,7 +37,8 @@ Rejected alternatives:
 | `scripts/validate-graph` | Bash | Validate `plan-graph.json` (schema, acyclic, file-ownership overlap only between dependent tasks) | `jq` |
 | `scripts/lanes` | Bash | `create N`, `reset <lane> <branch>`, `remove` for `.worktrees/<plan-slug>-lane-<i>` | git |
 | `scripts/merge-queue` | Bash | Rebase task branch onto plan branch, `--no-ff` merge, batch merge, revert, bisect helper | git |
-| `workflows/parallel-sdd.js` | Workflow script | Graph-scheduled pipeline, fix loop, merge queue, final review; returns compact report | all above |
+| `workflows/parallel-sdd.js` | Workflow script, shipped in the plugin's `workflows/` dir | Graph-scheduled pipeline, fix loop, merge queue, final review; returns compact report | all above |
+| `agents/sp-planner.md` | Agent definition shipped by the plugin (opus, effort high) | Resolve signals (questions, gaps, interface changes, new tasks); append rulings to `decisions.md`; mutate the task graph | `plan-graph.json`, spec, plan |
 | `bench/` | Fixtures + scripts | Two benchmark repos with plans, metrics extractor, report | §8 |
 
 Superpowers assets are resolved at runtime from the installed plugin path (latest version directory under `~/.claude/plugins/cache/claude-plugins-official/superpowers/`): `scripts/sdd-workspace`, `scripts/task-brief`, `scripts/review-package`, `implementer-prompt.md`, `task-reviewer-prompt.md`, `re-review-prompt.md`. The skill fails fast if any is missing.
@@ -94,9 +96,37 @@ Superpowers' `progress.md` stays the ledger. **Only the merge queue writes to it
    1. *Implement* — agent (`sp-implementer-fast` or `sp-implementer` by `tier`), cwd = lane path: `lanes reset` to the plan branch tip, create the task branch, `task-brief`, implement with TDD, run the task's tests, commit. Brief states the owned files; touching others ⇒ report BLOCKED. Returns `{branch, commit, files_touched, tests, status}`.
    2. *Review* — read-only, no worktree: `sp-reviewer` on the task branch diff via `review-package`; checks spec compliance and file-ownership scope. `risk: high` adds a second, integration-focused `sp-reviewer` in parallel. Returns `{verdict, findings[]}`.
    3. *Fix loop* — on findings, a fixer continues the same branch in the same lane, followed by a scoped re-review; up to 5 rounds, rounds 4-5 on `sp-final-reviewer`.
-5. **Merge queue (single serialized JS promise chain):** approved tasks enqueue; the queue takes up to `batch` ready tasks, and for each rebases its branch onto the plan branch and merges `--no-ff`; then runs the full test suite once for the batch. Green ⇒ update ledger, resolve those tasks' merged promises, free dependants. Red ⇒ bisect the batch (revert, re-test) to find the culprit; see §6.
+5. **Merge queue (single serialized JS promise chain):** approved tasks enqueue; the queue takes the tasks that are ready *now*, up to `batch` (it never waits to fill a batch), and for each rebases its branch onto the plan branch and merges `--no-ff`; then runs the full test suite once for the batch. Green ⇒ update ledger, resolve those tasks' merged promises, free dependants. Red ⇒ bisect the batch (revert, re-test) to find the culprit; see §6.
+   **Integration checkpoints:** after every 3 merged tasks, a read-only `sp-reviewer` (label `checkpoint·<n>`) reviews the cumulative plan-branch diff since the previous checkpoint for cross-task coherence: duplicated helpers, inconsistent contracts between modules, drifting conventions. Findings become signals (§5.1). The Opus final review is unchanged.
 6. **Finish:** `sp-final-reviewer` reviews the whole plan branch (`review-package` from merge base). Cleanup agent removes lanes (`lanes remove`), keeping lanes that hold a blocked task. Workflow returns the compact report.
 7. **Report to the main session:** per task (status, rounds, reviewer tier), blocked/skipped list with reasons, merge-queue events, final review findings, "Rulings I made" verbatim, and timing/setup notes. Nothing else enters the controller's context.
+
+### 5.1 Coordination: signals, planner, and new tasks
+
+Agents never message each other: coordination goes through structured results and files on disk, so runs stay deterministic and resumable.
+
+- **Signals.** Every implementer, fixer, reviewer and checkpoint result carries `signals[]`: `{type: question | gap | interface_change | new_task, affects: [task ids], detail}`.
+- **Planner queue.** The script feeds signals, one at a time, to a serialized `sp-planner` queue (label `planner·S<n>`). The planner:
+  - answers from the plan/spec when it can, recording a ruling in `.superpowers/sdd/<plan-slug>/decisions.md` (these join "Rulings I made");
+  - for `interface_change`, either requires conformance to the plan's contract or accepts it and adds an adaptation task for affected tasks;
+  - when the question needs the user (spec or scope change), blocks the task and its descendants; independent work continues and the question is reported at the end.
+- **Propagation.** Every implementer, fixer and reviewer reads `decisions.md` at start. Tasks already running receive new rulings at their next fix round; if a ruling invalidates committed work, the planner schedules an extra fix round for that task.
+- **New tasks.** `new_task` signals and checkpoint findings are classified by the planner:
+  - *required for the plan to work* → added to the live graph with deps and owned files; ownership is re-validated, and an overlap with an active task becomes a dependency edge;
+  - *improvement or out of scope* → appended to `backlog.md`, reported, not executed.
+  - **Scope guard:** at most 3 new tasks per run, or 30% of the plan's task count, whichever is lower; beyond that, new tasks go to the backlog and the report flags the plan as likely incomplete.
+- **Dispatch.** New tasks enter the same scheduler (deps merged + free lane). The agent is always fresh; the *lane* (worktree + installed dependencies) is what gets reused. Workflow agents are single-use, so, unlike SDD's resumed implementer for fix rounds 1-3, each fixer is a fresh agent given the brief, the previous report and the findings (extra tokens measured in §8).
+
+### 5.2 Naming and observability
+
+One naming scheme everywhere, so any message is attributable to the orchestrator or a specific agent:
+
+- Agent labels: `T3·impl`, `T3·fix-r2`, `T3·review`, `T3·review-int`, `merge·b4`, `checkpoint·2`, `planner·S7`, `final-review`, `setup`.
+- Progress groups (`phase`): one per task (`T3 — <title>`), plus `Merge queue`, `Planner`, `Final`.
+- `log()` lines: `[orchestrator] …` or `[T3] …`.
+- Commits `T3: <message>`; branches `plan/<slug>/T3`; ledger and log record lane occupancy (`lane-2 ⇐ T3`).
+- Final report grouped by task, with each ruling attributed to its author (`planner·S7`, `T3·impl`).
+- The main session only shows the graph approval and the final report.
 
 ## 6. Error handling
 
@@ -130,7 +160,7 @@ Safety limits: default 3 lanes (configurable, capped by the Workflow concurrency
 - Analyzer fixtures: 3 plans with a known correct graph.
 
 ### Benchmark
-- **A:** current SDD via `sp-orchestrator`. **B:** this mode.
+- **A:** current SDD via `sp-orchestrator`. **B:** this mode. **C:** Agent Teams: lead + 3 teammates spawned from the `sp-implementer*` definitions, each told to work only in its assigned `.worktrees/` lane, task list loaded with `plan-graph.json` dependencies, and a `TaskCompleted` hook that rejects completion without green task tests and a reviewer verdict.
 - **Fixtures (`bench/`):** a *wide* plan (~8 tasks, mostly independent) and a *narrow* control plan (~6 tasks, mostly chained).
 - **Protocol:** 2 runs per plan per mode; same session model and `sp-*` agents.
 - **Metrics** (extracted by `bench/metrics` from transcripts and ledger): wall-clock total, lane setup, merge-queue wait; tokens per role and estimated cost; controller peak context; tests green at end; final-review findings by severity; fix rounds; conflicts; blocked tasks.
@@ -141,4 +171,6 @@ Safety limits: default 3 lanes (configurable, capped by the Workflow concurrency
 
 - Dependency setup time per lane may dominate on small plans (measured as its own metric).
 - Analyzer false negatives (missed dependency) surface as conflicts; mitigated by ownership rules and the conflict fix round.
-- Workflow runtime limits (concurrency cap ≈ CPUs − 2) bound the lane count on this machine.
+- Workflow runtime limits (concurrency cap ≈ CPUs − 2) bound the lane count on this machine. Runs above 25 agents or 1.5M projected tokens show a "Large workflow" warning; an 8-task plan with reviews and fix rounds can cross it.
+- Fresh fixers (no implementer resume) may cost more tokens per fix round than SDD.
+- Planner decisions are model judgment; every ruling is logged and surfaced verbatim for the user to audit.
