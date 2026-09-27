@@ -4,7 +4,7 @@ Runs an approved [Superpowers](https://github.com/obra/superpowers) implementati
 
 ## Requirements
 
-- Superpowers ≥ 6.4.1. It is declared as a plugin dependency (`superpowers@claude-plugins-official`), so installing this plugin installs it too.
+- Superpowers ≥ 6.4.1. It is declared as a plugin dependency (`superpowers` from the same marketplace), so installing this plugin installs it too.
 - git, jq, Node 24+, Workflows enabled in Claude Code
 
 ## Agents

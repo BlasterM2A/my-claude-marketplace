@@ -41,6 +41,15 @@ field() { printf '%s\n' "${lines[@]}" | sed -n "s/^$1=//p"; }
   [ "$(field TASKS)" = "2" ]
 }
 
+@test "without an install record, finds superpowers cached by any marketplace" {
+  rm -rf "$CACHE"
+  OTHER="$CLAUDE_CONFIG_DIR/plugins/cache/blasterm2a/superpowers"
+  CACHE="$OTHER" make_superpowers 6.4.2
+  run "$PF" "$REPO" "$REPO/docs/plan.md"
+  [ "$status" -eq 0 ]
+  [ "$(field SP_SKILLS)" = "$OTHER/6.4.2/skills" ]
+}
+
 @test "uses the installed superpowers version, not the newest cache directory" {
   record_install 6.4.1
   run "$PF" "$REPO" "$REPO/docs/plan.md"

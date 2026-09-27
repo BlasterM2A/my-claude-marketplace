@@ -33,7 +33,7 @@ test('bundled sp-* agents pin model and effort', () => {
 
 test('the manifest declares the Superpowers dependency', () => {
   const manifest = JSON.parse(read('.claude-plugin/plugin.json'))
-  assert.deepEqual(manifest.dependencies, ['superpowers@claude-plugins-official'])
+  assert.deepEqual(manifest.dependencies, ['superpowers'])
 })
 
 test('analyzer prompt covers every graph field and placeholder', () => {

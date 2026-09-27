@@ -13,7 +13,7 @@ repo=$1; plan=$2
 min_version=6.4.1
 claude_dir=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 installed=$claude_dir/plugins/installed_plugins.json
-cache_root=$claude_dir/plugins/cache/claude-plugins-official/superpowers
+cache_dir=$claude_dir/plugins/cache
 agents_dir=${AGENTS_DIR:-$claude_dir/agents}
 errors=()
 
@@ -39,6 +39,19 @@ newest_in() {
   [ -z "$v" ] || echo "$1/$v"
 }
 
+# Newest superpowers version cached by any marketplace.
+newest_cached() {
+  local root c best=
+  for root in "$cache_dir"/*/superpowers; do
+    c=$(newest_in "$root")
+    [ -n "$c" ] || continue
+    if [ -z "$best" ] || [ "$(printf '%s\n' "$(basename "$best")" "$(basename "$c")" | sort -V | tail -1)" = "$(basename "$c")" ]; then
+      best=$c
+    fi
+  done
+  echo "$best"
+}
+
 # The active install: a project/local install for this repo, else the user install. Fall back to the newest cached version.
 sp_path=
 if [ -n "${SP_ROOT:-}" ]; then
@@ -48,11 +61,11 @@ else
     [.plugins // {} | to_entries[] | select(.key | startswith("superpowers@")) | .value[]
       | select(.scope == "user" or .projectPath == $repo)]
     | sort_by(if .scope == "user" then 1 else 0 end) | .[0].installPath // empty' "$installed" 2>/dev/null || true)
-  [ -n "$sp_path" ] || sp_path=$(newest_in "$cache_root")
+  [ -n "$sp_path" ] || sp_path=$(newest_cached)
 fi
 sp_skills="$sp_path/skills"
 if [ -z "$sp_path" ] || [ ! -d "$sp_path" ]; then
-  errors+=("superpowers is not installed; install superpowers@claude-plugins-official")
+  errors+=("superpowers is not installed; install the superpowers plugin (e.g. superpowers@blasterm2a)")
 else
   version=$(basename "$sp_path")
   if [ "$(printf '%s\n' "$min_version" "$version" | sort -V | head -1)" != "$min_version" ]; then

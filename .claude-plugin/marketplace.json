@@ -4,17 +4,27 @@
   "owner": {
     "name": "BlasterM2A"
   },
-  "allowCrossMarketplaceDependenciesOn": [
-    "claude-plugins-official"
-  ],
   "plugins": [
+    {
+      "name": "superpowers",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/obra/superpowers.git",
+        "ref": "v6.4.2",
+        "sha": "8ca22dba9a94f28898bbce59f2537ff4d87c747d"
+      },
+      "description": "Superpowers by Jesse Vincent (obra), pinned to an upstream release: brainstorming, planning, subagent-driven development, TDD, debugging and code review skills.",
+      "version": "6.4.2",
+      "homepage": "https://github.com/obra/superpowers",
+      "license": "MIT"
+    },
     {
       "name": "superpowers-plus",
       "source": "./plugins/superpowers-plus",
       "description": "Execute approved Superpowers plans in parallel lane worktrees with a serialized merge queue.",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "dependencies": [
-        "superpowers@claude-plugins-official"
+        "superpowers"
       ]
     },
     {
