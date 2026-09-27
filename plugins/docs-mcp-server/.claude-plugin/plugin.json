@@ -1,0 +1,18 @@
+{
+  "name": "docs-mcp-server",
+  "description": "Connect Claude Code to a shared docs-mcp-server and drive it from the shell with the docs-mcp CLI.",
+  "version": "0.1.0",
+  "userConfig": {
+    "url": {
+      "type": "string",
+      "title": "Server URL",
+      "description": "MCP endpoint of a docs-mcp-server, e.g. https://docs.example.internal/mcp. Leave empty to use the DOCS_MCP_URL environment variable."
+    }
+  },
+  "mcpServers": {
+    "docs-mcp-server": {
+      "type": "http",
+      "url": "${DOCS_MCP_URL:-${user_config.url}}"
+    }
+  }
+}

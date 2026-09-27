@@ -16,6 +16,12 @@
       "dependencies": [
         "superpowers@claude-plugins-official"
       ]
+    },
+    {
+      "name": "docs-mcp-server",
+      "source": "./plugins/docs-mcp-server",
+      "description": "Connect Claude Code to a shared docs-mcp-server and drive it from the shell with the docs-mcp CLI.",
+      "version": "0.1.0"
     }
   ],
   "renames": {

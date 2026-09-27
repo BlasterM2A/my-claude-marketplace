@@ -1,0 +1,13 @@
+version: '3'
+
+tasks:
+  test:
+    desc: Lint, then run all tests
+    cmds:
+      - task: lint
+      - python -m unittest discover -s test -v
+  lint:
+    desc: Check lint and formatting with ruff
+    cmds:
+      - ruff check .
+      - ruff format --check .
