@@ -16,7 +16,7 @@ plugin.
 Success criteria:
 
 - `claude plugin install docs-mcp-server@blasterm2a` asks for the server URL once
-  and the server's tools appear in new sessions.
+  (or reads it from `DOCS_MCP_URL`) and the server's tools appear in new sessions.
 - Claude can index, search and maintain the shared index through the MCP tools,
   following conventions that keep a team-shared index tidy.
 - Scripts and local skills can drive the same server from the shell with
@@ -51,6 +51,12 @@ Success criteria:
   server config and skill content as `${user_config.KEY}`; files in a plugin's
   `bin/` are on the `PATH` of the Bash tool while the plugin is enabled; plugin
   MCP tools are named `mcp__plugin_<plugin>_<server>__<tool>`.
+- Plugin facts (verified with `--debug-file` on Claude Code 2.1.283): a plugin
+  MCP `url` expands environment variables, `${VAR:-default}` defaults and a
+  nested `${DOCS_MCP_URL:-${user_config.url}}`; with neither set, Claude Code
+  reports "URL is unset or invalid" and points to the plugin's options. A plugin
+  MCP server whose resolved URL equals a manually configured server is
+  **suppressed** ("duplicates manually-configured …").
 
 ## Components
 
@@ -58,11 +64,15 @@ Plugin directory `plugins/docs-mcp-server/`, version `0.1.0`.
 
 ### 1. Manifest and MCP connection (`.claude-plugin/plugin.json`)
 
-- `userConfig.url`: string, required, no default, not sensitive. Title "Server
+- `userConfig.url`: string, optional, no default, not sensitive. Title "Server
   URL"; description "MCP endpoint of a docs-mcp-server, e.g.
-  https://docs.example.internal/mcp". Saved in the user's settings
-  (`pluginConfigs`), editable from `/config`.
-- `mcpServers.docs-mcp-server`: `{ "type": "http", "url": "${user_config.url}" }`.
+  https://docs.example.internal/mcp. Leave empty to use the DOCS_MCP_URL
+  environment variable." Saved in the user's settings (`pluginConfigs`),
+  editable from `/config`.
+- `mcpServers.docs-mcp-server`:
+  `{ "type": "http", "url": "${DOCS_MCP_URL:-${user_config.url}}" }`. The
+  environment variable wins over the saved value (per-machine or per-shell
+  override, e.g. set by mise for one workspace).
   Tools become `mcp__plugin_docs-mcp-server_docs-mcp-server__<tool>`
   (`search_docs`, `scrape_docs`, `list_libraries`, `find_version`,
   `refresh_version`, `remove_docs`, `fetch_url`, `list_jobs`, `get_job_info`,
@@ -74,11 +84,11 @@ Plugin directory `plugins/docs-mcp-server/`, version `0.1.0`.
 
 A single Python 3 file, standard library only, executable, `#!/usr/bin/env python3`.
 
-**Endpoint resolution**, first match wins: `--url`, `DOCS_MCP_URL`,
-`CLAUDE_PLUGIN_OPTION_URL`. None set: exit 2 with a message naming all three.
-(Whether Claude Code exports `CLAUDE_PLUGIN_OPTION_URL` to `bin/` executables is
-undocumented; implementation checks it, and the skill passes `--url` explicitly
-either way.)
+**Endpoint resolution**, first non-empty value wins, in the same order as the
+MCP connection: `--url`, `DOCS_MCP_URL`, `CLAUDE_PLUGIN_OPTION_URL`. None set:
+exit 2 with a message naming all three. Whether Claude Code exports
+`CLAUDE_PLUGIN_OPTION_URL` to `bin/` executables is undocumented, so the skill
+does not rely on it (see the skill section).
 
 **Transport**: MCP Streamable HTTP. `initialize` (protocol version
 `2025-06-18`, falling back to what the server returns), `notifications/initialized`,
@@ -136,7 +146,10 @@ modelled on the upstream `docs-search`, `docs-manage` and `fetch-url` skills
   server's disk.
 - **When to use `docs-mcp` instead of the MCP tools**: loops over many
   libraries or URLs, waiting for jobs, and scripts or other skills. Commands
-  always pass `--url "${user_config.url}"`.
+  are written as `DOCS_MCP_URL="${DOCS_MCP_URL:-${user_config.url}}" docs-mcp …`,
+  so the shell applies the same precedence as the MCP connection (the saved
+  value is substituted into the skill text; the variable is resolved at run
+  time).
 
 ### 4. Documentation and tooling
 
@@ -163,14 +176,16 @@ modelled on the upstream `docs-search`, `docs-manage` and `fetch-url` skills
 - **Unit tests** (`test/`, `unittest`): a fake MCP server built on
   `http.server` in a background thread that checks the handshake, requires the
   session id on later requests, and can answer in JSON or SSE. Cases: endpoint
-  resolution order; handshake and session header; JSON and SSE parsing; tool
+  resolution order, including empty values being skipped; handshake and session header; JSON and SSE parsing; tool
   error, JSON-RPC error and HTTP error to exit codes; `--insecure` warning;
   `remove` refusal; `wait` success, failure and timeout; job id parsing for
   `scrape --wait`.
 - **Manifest**: `task validate` (catalog, manifest, version agreement).
 - **End to end, manual, on a machine with access to a real server**: install
   from the local marketplace clone into an isolated `CLAUDE_CONFIG_DIR`, set the
-  URL, confirm `claude mcp list` shows the server connected, then with the CLI:
+  URL, confirm `claude mcp list` shows the server connected; repeat once with
+  the saved value empty and `DOCS_MCP_URL` set, and once with both set to
+  different URLs (the variable must win). Then with the CLI:
   `libraries`, `scrape` a small public page into a throw-away `zz-` library
   with `--wait`, `search` it, `remove --yes` it.
 - **Public-safety check** before publishing: `git grep` the plugin for
@@ -182,5 +197,8 @@ modelled on the upstream `docs-search`, `docs-manage` and `fetch-url` skills
 1. Implement on `feature/docs-mcp-server-plugin`, `task` green.
 2. Release with `/release-plugin docs-mcp-server 0.1.0` (first tag
    `docs-mcp-server--v0.1.0`).
-3. Install locally, enter the server URL, verify, then remove the manually
-   configured MCP entry for the same server so its tools are not listed twice.
+3. Install locally and enter the server URL (or set `DOCS_MCP_URL`). While a
+   manually configured MCP entry with the same URL exists, Claude Code
+   suppresses the plugin's server, so remove the manual entry
+   (`claude mcp remove <name> -s user`), then verify the plugin's tools appear
+   in a new session.
