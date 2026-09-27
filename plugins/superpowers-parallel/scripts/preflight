@@ -2,15 +2,19 @@
 # Check that a repository and plan are ready for a parallel plan run.
 #
 # Usage: preflight REPO PLAN
-# Prints SP_SKILLS=<superpowers skills dir> and TASKS=<count> on success;
+# Prints SP_SKILLS=<superpowers skills dir>, TASKS=<count> and AGENTS=<agent types JSON> on success;
 # one "error: ..." line per problem on stderr and exit 1 otherwise.
-# Env: SP_ROOT (superpowers plugin cache dir), AGENTS_DIR (user agents dir).
+# Env: CLAUDE_CONFIG_DIR (default ~/.claude), SP_ROOT (superpowers versions dir; overrides the install record),
+#      AGENTS_DIR (user agents dir).
 set -euo pipefail
 
 [ $# -eq 2 ] || { sed -n '4,8p' "$0" >&2; exit 2; }
 repo=$1; plan=$2
-sp_root=${SP_ROOT:-$HOME/.claude/plugins/cache/claude-plugins-official/superpowers}
-agents_dir=${AGENTS_DIR:-$HOME/.claude/agents}
+min_version=6.4.1
+claude_dir=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+installed=$claude_dir/plugins/installed_plugins.json
+cache_root=$claude_dir/plugins/cache/claude-plugins-official/superpowers
+agents_dir=${AGENTS_DIR:-$claude_dir/agents}
 errors=()
 
 if ! git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -29,11 +33,27 @@ else
   errors+=("no such plan file: $plan")
 fi
 
-version=$(ls "$sp_root" 2>/dev/null | sort -V | tail -1 || true)
-sp_skills="$sp_root/$version/skills"
-if [ -z "$version" ]; then
-  errors+=("superpowers is not installed under $sp_root")
+newest_in() { local v; v=$(ls "$1" 2>/dev/null | sort -V | tail -1 || true); [ -z "$v" ] || echo "$1/$v"; }
+
+# The active install: a project/local install for this repo, else the user install. Fall back to the newest cached version.
+sp_path=
+if [ -n "${SP_ROOT:-}" ]; then
+  sp_path=$(newest_in "$SP_ROOT")
 else
+  [ -f "$installed" ] && sp_path=$(jq -r --arg repo "$repo" '
+    [.plugins // {} | to_entries[] | select(.key | startswith("superpowers@")) | .value[]
+      | select(.scope == "user" or .projectPath == $repo)]
+    | sort_by(if .scope == "user" then 1 else 0 end) | .[0].installPath // empty' "$installed" 2>/dev/null || true)
+  [ -n "$sp_path" ] || sp_path=$(newest_in "$cache_root")
+fi
+sp_skills="$sp_path/skills"
+if [ -z "$sp_path" ] || [ ! -d "$sp_path" ]; then
+  errors+=("superpowers is not installed; install superpowers@claude-plugins-official")
+else
+  version=$(basename "$sp_path")
+  if [ "$(printf '%s\n' "$min_version" "$version" | sort -V | head -1)" != "$min_version" ]; then
+    errors+=("superpowers $version is older than $min_version; update it")
+  fi
   for f in subagent-driven-development/scripts/sdd-workspace subagent-driven-development/scripts/task-brief \
     subagent-driven-development/scripts/review-package subagent-driven-development/implementer-prompt.md \
     subagent-driven-development/task-reviewer-prompt.md subagent-driven-development/re-review-prompt.md \
@@ -42,13 +62,22 @@ else
   done
 fi
 
-for a in sp-implementer-fast sp-implementer sp-reviewer sp-final-reviewer; do
-  [ -f "$agents_dir/$a.md" ] || errors+=("missing agent $a ($agents_dir/$a.md)")
-done
-
 if [ ${#errors[@]} -gt 0 ]; then
   printf 'error: %s\n' "${errors[@]}" >&2
   exit 1
 fi
+
+# A project or user agent with the same name replaces the plugin's bundled copy.
+agent_type() {
+  local d
+  for d in "$repo/.claude/agents" "$agents_dir"; do
+    [ -d "$d" ] && grep -rqxE --include='*.md' "name:[[:space:]]*$1[[:space:]]*" "$d" && { echo "$1"; return; }
+  done
+  echo "superpowers-parallel:$1"
+}
+
 echo "SP_SKILLS=$sp_skills"
 echo "TASKS=$tasks"
+echo "AGENTS=$(jq -nc --arg fast "$(agent_type sp-implementer-fast)" --arg standard "$(agent_type sp-implementer)" \
+  --arg reviewer "$(agent_type sp-reviewer)" --arg escalation "$(agent_type sp-final-reviewer)" \
+  '{fast: $fast, standard: $standard, reviewer: $reviewer, escalation: $escalation}')"

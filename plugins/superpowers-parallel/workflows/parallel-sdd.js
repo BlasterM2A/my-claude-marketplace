@@ -12,11 +12,12 @@ export const meta = {
 
 // ---------- inputs ----------
 const A = args
+// Bundled agents by default; preflight maps a role to the user's own agent when one with the same name exists.
 const AG = Object.assign({
-  fast: 'sp-implementer-fast',
-  standard: 'sp-implementer',
-  reviewer: 'sp-reviewer',
-  escalation: 'sp-final-reviewer',
+  fast: 'superpowers-parallel:sp-implementer-fast',
+  standard: 'superpowers-parallel:sp-implementer',
+  reviewer: 'superpowers-parallel:sp-reviewer',
+  escalation: 'superpowers-parallel:sp-final-reviewer',
   planner: 'superpowers-parallel:sp-planner',
 }, A.agents || {})
 const S = `${A.pluginDir}/scripts`

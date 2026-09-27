@@ -4,8 +4,12 @@ Runs an approved [Superpowers](https://github.com/obra/superpowers) implementati
 
 ## Requirements
 
-- Superpowers ≥ 6.4.1 and the `sp-*` agents in `~/.claude/agents/` (`sp-implementer-fast`, `sp-implementer`, `sp-reviewer`, `sp-final-reviewer`)
+- Superpowers ≥ 6.4.1. It is declared as a plugin dependency (`superpowers@claude-plugins-official`), so installing this plugin installs it too.
 - git, jq, Node 24+, Workflows enabled in Claude Code
+
+## Agents
+
+The plugin bundles the subagents it dispatches: `sp-implementer-fast` (haiku/low), `sp-implementer` (sonnet/medium), `sp-reviewer` (sonnet/medium), `sp-final-reviewer` (opus/high) and `sp-planner` (opus/high). To tune one, define an agent with the same `name` in the project's `.claude/agents/` or in `~/.claude/agents/`: preflight detects it and the run uses yours instead of the bundled copy (`sp-planner` is always the bundled one).
 
 ## Usage
 

@@ -14,6 +14,28 @@ test('sp-planner pins model and effort', () => {
   assert.ok(fm.description.length > 20)
 })
 
+const BUNDLED = {
+  'sp-implementer-fast': ['haiku', 'low'],
+  'sp-implementer': ['sonnet', 'medium'],
+  'sp-reviewer': ['sonnet', 'medium'],
+  'sp-final-reviewer': ['opus', 'high'],
+}
+
+test('bundled sp-* agents pin model and effort', () => {
+  for (const [name, [model, effort]] of Object.entries(BUNDLED)) {
+    const fm = frontmatter(read(`agents/${name}.md`))
+    assert.equal(fm.name, name)
+    assert.equal(fm.model, model, `${name} model`)
+    assert.equal(fm.effort, effort, `${name} effort`)
+    assert.ok(fm.description.length > 20, `${name} description`)
+  }
+})
+
+test('the manifest declares the Superpowers dependency', () => {
+  const manifest = JSON.parse(read('.claude-plugin/plugin.json'))
+  assert.deepEqual(manifest.dependencies, ['superpowers@claude-plugins-official'])
+})
+
 test('analyzer prompt covers every graph field and placeholder', () => {
   const p = read('skills/parallel-plan-execution/analyzer-prompt.md')
   for (const key of ['test_command', 'setup_command', 'deps', 'files', 'risk', 'tier', 'rationale', 'critical_path', 'estimated_speedup', 'recommendation']) {

@@ -4,12 +4,18 @@
   "owner": {
     "name": "BlasterM2A"
   },
+  "allowCrossMarketplaceDependenciesOn": [
+    "claude-plugins-official"
+  ],
   "plugins": [
     {
       "name": "superpowers-parallel",
       "source": "./plugins/superpowers-parallel",
       "description": "Execute approved Superpowers plans in parallel lane worktrees with a serialized merge queue.",
-      "version": "0.1.1"
+      "version": "0.2.0",
+      "dependencies": [
+        "superpowers@claude-plugins-official"
+      ]
     }
   ]
 }

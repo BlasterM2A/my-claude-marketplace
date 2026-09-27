@@ -15,7 +15,7 @@ Runs an approved plan with the `parallel-sdd` Workflow: tasks start as soon as t
 
 Run `PLUGIN_DIR/scripts/preflight <repo root> <plan path>`.
 - On errors, stop and show them. For ".worktrees/ is not git-ignored", offer to add `.worktrees/` to `.gitignore` and commit it.
-- Keep `SP_SKILLS` and `TASKS` from its output.
+- Keep `SP_SKILLS`, `TASKS` and `AGENTS` from its output.
 
 ## 2. Branch, workspace, briefs
 
@@ -35,7 +35,7 @@ Then run `node PLUGIN_DIR/scripts/validate-graph.mjs WS/plan-graph.json`. On err
 
 Show the user a table (id, title, deps, risk, tier, files), the critical path, the estimated speedup, the recommendation, `test_command` and `setup_command`. Ask them to approve or correct it; apply corrections to `plan-graph.json` and re-validate.
 
-If the recommendation is `sequential-sdd`, say so and offer the normal route instead (one `sp-orchestrator` subagent running superpowers:subagent-driven-development). Do not start the Workflow without explicit approval.
+If the recommendation is `sequential-sdd`, say so and offer the normal route instead (superpowers:subagent-driven-development, run by one `sp-orchestrator` subagent if the user defines that agent). Do not start the Workflow without explicit approval.
 
 ## 5. Run the Workflow
 
@@ -44,7 +44,7 @@ Call the Workflow tool with `scriptPath: PLUGIN_DIR/workflows/parallel-sdd.js` a
 {
   "plan": "<absolute plan path>", "spec": "<absolute spec path>", "repo": "<absolute repo root>",
   "baseBranch": "<BASE_BRANCH>", "planBranch": "<PLAN_BRANCH>", "slug": "<SLUG>",
-  "workspace": "<WS>", "pluginDir": "<PLUGIN_DIR>", "spSkills": "<SP_SKILLS>",
+  "workspace": "<WS>", "pluginDir": "<PLUGIN_DIR>", "spSkills": "<SP_SKILLS>", "agents": <AGENTS>,
   "lanes": 3, "graph": <contents of plan-graph.json>,
   "merged": <MERGED>, "attempt": <ATTEMPT>
 }

@@ -13,12 +13,8 @@ claude plugin install <plugin>@blasterm2a
 
 | Plugin | Version | Description |
 |:---|:---|:---|
-| [superpowers-parallel](plugins/superpowers-parallel) | 0.1.1 | Execute approved [Superpowers](https://github.com/obra/superpowers) plans in parallel lane worktrees with a serialized merge queue. |
+| [superpowers-parallel](plugins/superpowers-parallel) | 0.2.0 | Execute approved [Superpowers](https://github.com/obra/superpowers) plans in parallel lane worktrees with a serialized merge queue. |
 
-### superpowers-parallel requirements
+### superpowers-parallel
 
-The plugin dispatches the `sp-*` subagents, which are **not** bundled with it. Define them yourself in `~/.claude/agents/` before use:
-
-- `sp-implementer-fast`, `sp-implementer`, `sp-reviewer`, `sp-final-reviewer`
-
-It also needs Superpowers ≥ 6.4.1, git, jq, Node 24+, and Workflows enabled in Claude Code. See the [plugin README](plugins/superpowers-parallel/README.md).
+Installing it also installs its dependency, [Superpowers](https://github.com/obra/superpowers) (`superpowers@claude-plugins-official`); this marketplace allows that cross-marketplace dependency. It bundles the `sp-*` subagents it uses; an agent with the same name in your `~/.claude/agents/` or project `.claude/agents/` replaces the bundled copy. It also needs git, jq, Node 24+, and Workflows enabled in Claude Code. See the [plugin README](plugins/superpowers-parallel/README.md).

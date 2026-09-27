@@ -28,7 +28,8 @@ test('rounds 4-5 escalate and a sixth round is never started', async () => {
   const { result, calls } = await runWorkflow({ agent, args: baseArgs([task('T1')]) })
   const fixes = calls.filter(c => c.label.startsWith('T1·fix-'))
   assert.deepEqual(fixes.map(c => c.agentType),
-    ['sp-implementer', 'sp-implementer', 'sp-implementer', 'sp-final-reviewer', 'sp-final-reviewer'])
+    ['superpowers-parallel:sp-implementer', 'superpowers-parallel:sp-implementer', 'superpowers-parallel:sp-implementer',
+      'superpowers-parallel:sp-final-reviewer', 'superpowers-parallel:sp-final-reviewer'])
   assert.equal(stateOf(result, 'T1').state, 'blocked')
   assert.equal(stateOf(result, 'T1').reason, 'fix loop exhausted after 5 rounds')
 })
