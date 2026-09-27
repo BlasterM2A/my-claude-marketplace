@@ -56,3 +56,11 @@ test('no final review when nothing merged; blocked lanes are kept', async () => 
   assert.equal(result.tasks[0].reason, 'implementer BLOCKED: no access')
   assert.deepEqual(result.lanes_kept, ['/repo/.worktrees/p-lane-1'])
 })
+
+test('the final reviewer reads the spec and the package, not the plan', async () => {
+  const { calls } = await runWorkflow({ agent: fakeAgent(), args: baseArgs([task('T1')]) })
+  const final = calls.find(c => c.label === 'final-review').prompt
+  assert.match(final, /review-package .+plan\.md/)
+  assert.doesNotMatch(final, /Read the plan/)
+  assert.match(final, /Read the spec/)
+})
