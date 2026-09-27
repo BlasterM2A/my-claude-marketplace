@@ -18,7 +18,7 @@ Plan 2 (separate, later): the benchmark in spec §8 ("Benchmark"), which needs t
 - No npm dependencies: Node scripts use only built-in modules; the Workflow script uses only the Workflow globals (`agent`, `parallel`, `pipeline`, `phase`, `log`, `args`, `budget`) and plain JS — no `import`, no `Date.now()`, no `Math.random()`, no filesystem access.
 - Tools are installed with `mise use <tool>@<version>` (never by hand-editing `mise.toml`), after checking `mise latest <tool>`. Tasks live in `Taskfile.yml`.
 - Worktrees live under `<repo>/.worktrees/`; lanes are named `.worktrees/<plan-slug>-lane-<i>`.
-- Branches: plan branch `plan/<plan-slug>`, task branches `plan/<plan-slug>/<task-id>`; task ids are `T<N>` (plan task N) and `N<k>` (tasks added at run time).
+- Branches: plan branch `plan/<plan-slug>`, task branches `plan/<plan-slug>--<task-id>`; task ids are `T<N>` (plan task N) and `N<k>` (tasks added at run time).
 - Never push; never merge into the default branch; no `--force` except `git worktree remove --force` on the run's own lanes.
 - Agent prompts must state: "Your Bash working directory resets between commands: always use absolute paths, `git -C <dir>` or `(cd <dir> && ...)`." (this machine sets `CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1`).
 - The skill never passes `name` when dispatching from the main session (named subagents become Agent Teams teammates here).
@@ -321,38 +321,38 @@ teardown() { rm -rf "$REPO"; }
 
 @test "checkout creates the task branch from the base branch" {
   "$LANES" create "$REPO" p 1 plan/p >/dev/null
-  run "$LANES" checkout "$L1" plan/p/T1 plan/p
+  run "$LANES" checkout "$L1" plan/p--T1 plan/p
   [ "$status" -eq 0 ]
-  [ "$(git -C "$L1" branch --show-current)" = plan/p/T1 ]
+  [ "$(git -C "$L1" branch --show-current)" = plan/p--T1 ]
   [ "$(git -C "$L1" rev-parse HEAD)" = "$(git -C "$REPO" rev-parse plan/p)" ]
 }
 
 @test "checkout keeps existing commits on a resumed task branch" {
   "$LANES" create "$REPO" p 1 plan/p >/dev/null
-  "$LANES" checkout "$L1" plan/p/T1 plan/p
+  "$LANES" checkout "$L1" plan/p--T1 plan/p
   echo work >"$L1/new.txt"
   git -C "$L1" add new.txt
   git -C "$L1" commit -qm "T1: work"
   sha=$(git -C "$L1" rev-parse HEAD)
   git -C "$L1" checkout -q --detach
-  run "$LANES" checkout "$L1" plan/p/T1 plan/p
+  run "$LANES" checkout "$L1" plan/p--T1 plan/p
   [ "$status" -eq 0 ]
   [ "$(git -C "$L1" rev-parse HEAD)" = "$sha" ]
 }
 
 @test "checkout moves a task branch out of another clean lane" {
   "$LANES" create "$REPO" p 2 plan/p >/dev/null
-  "$LANES" checkout "$L1" plan/p/T1 plan/p
-  run "$LANES" checkout "$L2" plan/p/T1 plan/p
+  "$LANES" checkout "$L1" plan/p--T1 plan/p
+  run "$LANES" checkout "$L2" plan/p--T1 plan/p
   [ "$status" -eq 0 ]
-  [ "$(git -C "$L2" branch --show-current)" = plan/p/T1 ]
+  [ "$(git -C "$L2" branch --show-current)" = plan/p--T1 ]
   [ -z "$(git -C "$L1" branch --show-current)" ]
 }
 
 @test "checkout refuses a dirty lane" {
   "$LANES" create "$REPO" p 1 plan/p >/dev/null
   echo dirty >"$L1/file.txt"
-  run "$LANES" checkout "$L1" plan/p/T1 plan/p
+  run "$LANES" checkout "$L1" plan/p--T1 plan/p
   [ "$status" -eq 3 ]
 }
 
@@ -480,11 +480,11 @@ setup() {
 
 teardown() { rm -rf "$REPO"; }
 
-# task_branch ID FILE CONTENT: commit FILE on plan/p/ID branched from plan/p.
+# task_branch ID FILE CONTENT: commit FILE on plan/p--ID branched from plan/p.
 task_branch() {
-  git -C "$REPO" branch -q "plan/p/$1" plan/p
+  git -C "$REPO" branch -q "plan/p--$1" plan/p
   local wt="$REPO/.worktrees/$1"
-  git -C "$REPO" worktree add -q "$wt" "plan/p/$1"
+  git -C "$REPO" worktree add -q "$wt" "plan/p--$1"
   echo "$3" >"$wt/$2"
   git -C "$wt" add "$2"
   git -C "$wt" commit -qm "$1: change"
@@ -493,7 +493,7 @@ task_branch() {
 @test "merges clean branches, runs tests once and writes the ledger" {
   task_branch T1 a.txt one
   task_branch T2 b.txt two
-  run "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T1=plan/p/T1 T2=plan/p/T2
+  run "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T1=plan/p--T1 T2=plan/p--T2
   [ "$status" -eq 0 ]
   [ "$(jq -c '[.merged[].task]' <<<"$output")" = '["T1","T2"]' ]
   [ "$(jq -r .tests_passed <<<"$output")" = true ]
@@ -504,7 +504,7 @@ task_branch() {
 @test "leaves a conflicting branch out" {
   task_branch T1 file.txt one
   task_branch T2 file.txt two
-  run "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T1=plan/p/T1 T2=plan/p/T2
+  run "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T1=plan/p--T1 T2=plan/p--T2
   [ "$status" -eq 0 ]
   [ "$(jq -c '[.merged[].task]' <<<"$output")" = '["T1"]' ]
   [ "$(jq -c .conflicts <<<"$output")" = '["T2"]' ]
@@ -515,7 +515,7 @@ task_branch() {
   task_branch T1 a.txt one
   task_branch T2 bad.txt BAD
   task_branch T3 c.txt three
-  run "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T1=plan/p/T1 T2=plan/p/T2 T3=plan/p/T3
+  run "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T1=plan/p--T1 T2=plan/p--T2 T3=plan/p--T3
   [ "$status" -eq 0 ]
   [ "$(jq -c '[.merged[].task]' <<<"$output")" = '["T1","T3"]' ]
   [ "$(jq -c .culprits <<<"$output")" = '["T2"]' ]
@@ -527,25 +527,25 @@ task_branch() {
 @test "aborts a merge left in progress by an interrupted run" {
   task_branch T1 file.txt one
   task_branch T2 file.txt two
-  git -C "$REPO" merge -q --no-ff plan/p/T1 -m "Merge T1"
-  git -C "$REPO" merge -q --no-ff plan/p/T2 -m "Merge T2" || true
+  git -C "$REPO" merge -q --no-ff plan/p--T1 -m "Merge T1"
+  git -C "$REPO" merge -q --no-ff plan/p--T2 -m "Merge T2" || true
   git -C "$REPO" rev-parse -q --verify MERGE_HEAD
   task_branch T3 c.txt three
-  run "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T3=plan/p/T3
+  run "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T3=plan/p--T3
   [ "$status" -eq 0 ]
   [ "$(jq -c '[.merged[].task]' <<<"$output")" = '["T3"]' ]
 }
 
 @test "refuses when the repo is not on the plan branch" {
   git -C "$REPO" switch -q main
-  run "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T1=plan/p/T1
+  run "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T1=plan/p--T1
   [ "$status" -eq 2 ]
 }
 
 @test "re-running a merged batch does not duplicate ledger lines" {
   task_branch T1 a.txt one
-  "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T1=plan/p/T1 >/dev/null
-  run "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T1=plan/p/T1
+  "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T1=plan/p--T1 >/dev/null
+  run "$MQ" batch "$REPO" plan/p "$LEDGER" "$TEST_CMD" T1=plan/p--T1
   [ "$status" -eq 0 ]
   [ "$(jq -c '[.merged[].task]' <<<"$output")" = '["T1"]' ]
   [ "$(grep -c '^Task 1:' "$LEDGER")" -eq 1 ]
@@ -936,7 +936,7 @@ function addTask(t) {
 }
 
 const phaseOf = t => `${t.id} — ${t.title}`
-const branchOf = t => `${A.planBranch}/${t.id}`
+const branchOf = t => `${A.planBranch}--${t.id}`
 const briefOf = t => t.brief || `${WS}/task-${t.id.slice(1)}-brief.md`
 const implType = t => (t.tier === 'fast' ? AG.fast : AG.standard)
 const laneName = lane => lane.split('/').pop().replace(`${A.slug}-`, '')

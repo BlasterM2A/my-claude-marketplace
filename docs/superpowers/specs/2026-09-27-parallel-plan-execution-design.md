@@ -80,7 +80,7 @@ Superpowers' `progress.md` stays the ledger. **Only the merge queue writes to it
 
 ### Branches
 - Plan branch: `plan/<plan-slug>` (created by the skill from the current HEAD).
-- Task branch: `plan/<plan-slug>/<task-id>`, created inside a lane from the current plan branch tip.
+- Task branch: `plan/<plan-slug>--<task-id>`, created inside a lane from the current plan branch tip.
 
 ## 5. Data flow
 

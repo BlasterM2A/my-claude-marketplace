@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Manage the persistent lane worktrees of one parallel plan run.
+#
+# Usage:
+#   lanes create REPO SLUG COUNT BASE_BRANCH     print one lane path per line
+#   lanes checkout LANE TASK_BRANCH BASE_BRANCH  put TASK_BRANCH in LANE; an
+#                                                existing branch keeps its commits
+#   lanes remove REPO SLUG [KEEP_LANE...]        remove the lanes except KEEP_LANE
+set -euo pipefail
+
+usage() { sed -n '4,9p' "$0" >&2; exit 2; }
+
+branch_exists() { git -C "$1" rev-parse --verify --quiet "refs/heads/$2" >/dev/null; }
+
+# Print the path of the worktree that has BRANCH checked out, if any.
+worktree_of() {
+  git -C "$1" worktree list --porcelain |
+    awk -v ref="branch refs/heads/$2" '/^worktree /{ path = substr($0, 10) } $0 == ref { print path }'
+}
+
+cmd=${1:-}
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  create)
+    [ $# -eq 4 ] || usage
+    repo=$(cd "$1" && pwd); slug=$2; count=$3; base=$4
+    branch_exists "$repo" "$base" || { echo "no such branch: $base" >&2; exit 2; }
+    mkdir -p "$repo/.worktrees"
+    for i in $(seq 1 "$count"); do
+      lane="$repo/.worktrees/$slug-lane-$i"
+      [ -d "$lane" ] || git -C "$repo" worktree add --quiet --detach "$lane" "$base"
+      echo "$lane"
+    done
+    ;;
+  checkout)
+    [ $# -eq 3 ] || usage
+    lane=$(cd "$1" && pwd); branch=$2; base=$3
+    [ -z "$(git -C "$lane" status --porcelain)" ] || { echo "lane not clean: $lane" >&2; exit 3; }
+    if branch_exists "$lane" "$branch"; then
+      holder=$(worktree_of "$lane" "$branch")
+      if [ -n "$holder" ] && [ "$holder" != "$lane" ]; then
+        [ -z "$(git -C "$holder" status --porcelain)" ] ||
+          { echo "branch $branch is checked out in dirty worktree $holder" >&2; exit 3; }
+        git -C "$holder" checkout --quiet --detach
+      fi
+      git -C "$lane" checkout --quiet "$branch"
+    else
+      git -C "$lane" checkout --quiet -b "$branch" "$base"
+    fi
+    ;;
+  remove)
+    [ $# -ge 2 ] || usage
+    repo=$(cd "$1" && pwd); slug=$2; shift 2
+    for lane in "$repo/.worktrees/$slug-lane-"*; do
+      [ -d "$lane" ] || continue
+      keep=no
+      for k in "$@"; do [ "$k" = "$lane" ] && keep=yes; done
+      [ "$keep" = yes ] || git -C "$repo" worktree remove --force "$lane"
+    done
+    git -C "$repo" worktree prune
+    ;;
+  *) usage ;;
+esac
