@@ -240,7 +240,7 @@ function finalPrompt() {
   return [
     `You perform the final whole-branch review of the plan ${A.plan} (spec: ${A.spec}). Read-only. ${CWD_RULE}`,
     `1. Run: base=$(git -C ${A.repo} merge-base ${A.baseBranch} ${A.planBranch}); then ${SDD}/scripts/review-package ${A.plan} "$base" ${A.planBranch} ${WS}/final-review.diff from ${A.repo}.`,
-    `2. Read the plan, the spec, ${WS}/decisions.md if it exists, and the package; follow ${A.spSkills}/requesting-code-review/code-reviewer.md.`,
+    `2. Read the spec, ${WS}/decisions.md if it exists, and the package; follow ${A.spSkills}/requesting-code-review/code-reviewer.md.`,
     'Return verdict, findings, declined and signals.',
   ].join('\n')
 }
