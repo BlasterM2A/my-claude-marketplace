@@ -24,6 +24,8 @@ const SDD = `${A.spSkills}/subagent-driven-development`
 const WS = A.workspace
 const BATCH = A.batch || 3
 const CHECKPOINT_EVERY = A.checkpointEvery || 3
+const ATTEMPT = A.attempt || 1
+const LONG_RULE = 'Run these commands with the Bash tool timeout of 600000 ms; if one could take longer, run it in the background and wait for it to finish.'
 const CWD_RULE = 'Your Bash working directory resets between commands: always use absolute paths, `git -C <dir>` or `(cd <dir> && ...)`.'
 
 // ---------- schemas ----------
@@ -135,6 +137,10 @@ let signalNo = 0
 let newTaskCount = 0
 const newTaskCap = Math.min(3, Math.ceil(0.3 * A.graph.tasks.length))
 
+function call(prompt, opts) {
+  return agent(`${prompt}\nAttempt: ${ATTEMPT}.`, opts)
+}
+
 function deferred() {
   let resolve
   const promise = new Promise(r => { resolve = r })
@@ -157,8 +163,10 @@ const laneName = lane => lane.split('/').pop().replace(`${A.slug}-`, '')
 // ---------- lanes ----------
 const freeLanes = []
 const laneWaiters = []
+let liveLanes = 0
 function acquireLane() {
   if (freeLanes.length) return Promise.resolve(freeLanes.shift())
+  if (liveLanes === 0) return Promise.resolve(null)
   const d = deferred()
   laneWaiters.push(d)
   return d.promise
@@ -168,12 +176,18 @@ function releaseLane(lane) {
   if (waiter) waiter.resolve(lane)
   else freeLanes.push(lane)
 }
+// A lane that held a blocked task is kept for inspection and never reused.
+function retireLane(lane) {
+  liveLanes--
+  log(`[orchestrator] ${laneName(lane)} retired: it holds a blocked task`)
+  if (liveLanes === 0) while (laneWaiters.length) laneWaiters.shift().resolve(null)
+}
 
 // ---------- prompts ----------
 function setupPrompt() {
   const setup = A.graph.setup_command
   return [
-    `Prepare the lane worktrees for a parallel plan run. ${CWD_RULE}`,
+    `Prepare the lane worktrees for a parallel plan run. ${CWD_RULE} ${LONG_RULE}`,
     `1. Run: ${S}/lanes create ${A.repo} ${A.slug} ${A.lanes || 3} ${A.planBranch}`,
     setup
       ? `2. Run the project setup command \`${setup}\` once in ${A.repo} and once in each lane printed by step 1, as \`(cd <dir> && ${setup})\`.`
@@ -197,14 +211,16 @@ function implementPrompt(t, lane) {
   ].join('\n')
 }
 
-function reviewPrompt(t, lens, tag, scoped) {
+function reviewPrompt(t, lens, tag, scoped, findings, fixBase) {
   const out = `${WS}/${t.id}-${tag}${lens === 'integration' ? '-int' : ''}.diff`
+  const base = fixBase || `"$(git merge-base ${A.planBranch} ${branchOf(t)})"`
   return [
     `You review task ${t.id} ("${t.title}") of the plan ${A.plan} (spec: ${A.spec}). Read-only: do not edit files or commit. ${CWD_RULE}`,
-    `1. Run: base=$(git -C ${A.repo} merge-base ${A.planBranch} ${branchOf(t)}); then ${SDD}/scripts/review-package ${A.plan} "$base" ${branchOf(t)} ${out} from ${A.repo}.`,
-    `2. Read the brief ${briefOf(t)}, ${WS}/decisions.md if it exists, and the package ${out}.`,
+    `1. Run as ONE command: (cd ${A.repo} && ${SDD}/scripts/review-package ${A.plan} ${base} ${branchOf(t)} ${out})`,
+    `2. Read the brief ${briefOf(t)}, the implementer report ${WS}/${t.id}-report.md (its test evidence), ${WS}/decisions.md if it exists, and the package ${out}.`,
     scoped
-      ? `3. This is a scoped re-review of fixes: follow ${SDD}/re-review-prompt.md and judge only whether the previous findings are resolved without regressions.`
+      ? [`3. This is a scoped re-review of a fix (the package covers only the fix commits): follow ${SDD}/re-review-prompt.md and judge only whether these findings are resolved without regressions:`,
+        ...(findings || []).map((f, i) => `   ${i + 1}. [${f.severity}] ${f.detail}${f.file ? ` (${f.file})` : ''}`)].join('\n')
       : `3. Follow ${SDD}/task-reviewer-prompt.md.`,
     `4. Scope check: the task owns only ${t.files.join(', ')}; a change to any other file is an Important finding.`,
     lens === 'integration'
@@ -230,7 +246,7 @@ function fixPrompt(t, lane, findings, tag) {
 function mergePrompt(batch) {
   const specs = batch.map(t => `${t.id}=${branchOf(t)}`).join(' ')
   return [
-    `Run exactly this command and return its JSON output as your structured result. Do not fix, retry or edit anything. ${CWD_RULE}`,
+    `Run exactly this command and return its JSON output as your structured result. Do not fix, retry or edit anything. ${CWD_RULE} ${LONG_RULE}`,
     `${S}/merge-queue batch ${A.repo} ${A.planBranch} ${WS}/progress.md '${A.graph.test_command.replace(/'/g, "'\\''")}' ${specs}`,
     'If the command exits non-zero, return merged=[], conflicts=[], culprits=[], tests_passed=false and put the error text in test_log.',
   ].join('\n')
@@ -239,7 +255,7 @@ function mergePrompt(batch) {
 function finalPrompt() {
   return [
     `You perform the final whole-branch review of the plan ${A.plan} (spec: ${A.spec}). Read-only. ${CWD_RULE}`,
-    `1. Run: base=$(git -C ${A.repo} merge-base ${A.baseBranch} ${A.planBranch}); then ${SDD}/scripts/review-package ${A.plan} "$base" ${A.planBranch} ${WS}/final-review.diff from ${A.repo}.`,
+    `1. Run as ONE command: (cd ${A.repo} && ${SDD}/scripts/review-package ${A.plan} "$(git merge-base ${A.baseBranch} ${A.planBranch})" ${A.planBranch} ${WS}/final-review.diff)`,
     `2. Read the spec, ${WS}/decisions.md if it exists, and the package; follow ${A.spSkills}/requesting-code-review/code-reviewer.md.`,
     'Return verdict, findings, declined and signals.',
   ].join('\n')
@@ -303,7 +319,7 @@ function onMerged(id) {
 }
 
 async function checkpoint(ids, n) {
-  const r = await agent(checkpointPrompt(ids, n), {
+  const r = await call(checkpointPrompt(ids, n), {
     label: `checkpoint·${n}`, phase: 'Merge queue', agentType: AG.reviewer, schema: REVIEW_SCHEMA,
   })
   if (!r) { events.push({ checkpoint: n, note: 'checkpoint reviewer returned no result' }); return }
@@ -323,16 +339,26 @@ function planSignal(s, from) {
 
 async function handleSignal(s, from, n) {
   const by = `planner·S${n}`
-  const d = await agent(plannerPrompt(s, from, n), { label: by, phase: 'Planner', agentType: AG.planner, schema: PLANNER_SCHEMA })
+  const d = await call(plannerPrompt(s, from, n), { label: by, phase: 'Planner', agentType: AG.planner, schema: PLANNER_SCHEMA })
   if (!d) { events.push({ signal: n, from, note: 'planner returned no result' }); return }
   events.push({ signal: n, from, action: d.action, reason: d.reason })
   if (d.ruling) rulings.push({ by, text: d.ruling })
   if (d.action === 'ruling' && d.rework) {
-    for (const id of d.affects) if (state[id] === 'running') tasks.get(id).rework = d.ruling
+    for (const id of d.affects) {
+      if (state[id] === 'running') tasks.get(id).rework = d.ruling
+      else if (state[id] === 'merged') runs.push(lateRuling(id, d.ruling, by))
+    }
   }
   if (d.action === 'block') for (const id of d.affects) blockTask(id, `needs user decision (${by}): ${d.reason}`)
   if ((d.action === 'add_task' || d.action === 'adapt') && d.new_task) addNewTask(d.new_task, by)
   if (d.action === 'backlog' && d.new_task) backlog.push({ from: by, title: d.new_task.title, reason: d.reason })
+}
+
+function lateRuling(id, ruling, by) {
+  return planSignal({
+    type: 'gap', affects: [id],
+    detail: `Ruling "${ruling}" (${by}) arrived after ${id} was already merged; decide whether an adapt task is needed.`,
+  }, 'orchestrator')
 }
 
 function blockTask(id, reason) {
@@ -359,10 +385,10 @@ function addNewTask(nt, by) {
   runs.push(runTask(id))
 }
 
-async function reviewTask(t, tag, scoped) {
+async function reviewTask(t, tag, scoped, findings, fixBase) {
   const lenses = !scoped && t.risk === 'high' ? ['spec', 'integration'] : ['spec']
   const labelOf = lens => `${t.id}·${lens === 'integration' ? 'review-int' : tag}`
-  const results = await parallel(lenses.map(lens => () => agent(reviewPrompt(t, lens, tag, scoped), {
+  const results = await parallel(lenses.map(lens => () => call(reviewPrompt(t, lens, tag, scoped, findings, fixBase), {
     label: labelOf(lens), phase: phaseOf(t), agentType: AG.reviewer, schema: REVIEW_SCHEMA,
   })))
   if (results.some(r => !r)) return null
@@ -375,28 +401,32 @@ async function reviewTask(t, tag, scoped) {
 
 async function fixRound(t, lane, findings, tag, round) {
   rounds[t.id] = (rounds[t.id] || 0) + 1
-  const fix = await agent(fixPrompt(t, lane, findings, tag), {
+  const fix = await call(fixPrompt(t, lane, findings, tag), {
     label: `${t.id}·fix-${tag}`, phase: phaseOf(t), agentType: round >= 4 ? AG.escalation : implType(t), schema: IMPL_SCHEMA,
   })
   if (!fix) return { ok: false, reason: `fixer ${tag} returned no result` }
   collect(`${t.id}·fix-${tag}`, fix)
   if (fix.status === 'BLOCKED') return { ok: false, reason: `fixer ${tag} BLOCKED: ${fix.summary}` }
-  return { ok: true }
+  const fixBase = t.head
+  t.head = fix.commit
+  return { ok: true, fixBase }
 }
 
 async function implementAndReview(t, lane) {
-  const impl = await agent(implementPrompt(t, lane), {
+  const impl = await call(implementPrompt(t, lane), {
     label: `${t.id}·impl`, phase: phaseOf(t), agentType: implType(t), schema: IMPL_SCHEMA,
   })
   if (!impl) return { ok: false, reason: 'implementer returned no result' }
   collect(`${t.id}·impl`, impl)
   if (impl.status === 'BLOCKED') return { ok: false, reason: `implementer BLOCKED: ${impl.summary}` }
+  t.head = impl.commit
   let review = await reviewTask(t, 'review', false)
   for (let round = 1; review && review.verdict !== 'approved'; round++) {
     if (round > 5) return { ok: false, reason: 'fix loop exhausted after 5 rounds' }
-    const fix = await fixRound(t, lane, review.findings, `r${round}`, round)
+    const findings = review.findings
+    const fix = await fixRound(t, lane, findings, `r${round}`, round)
     if (!fix.ok) return fix
-    review = await reviewTask(t, `re-review-r${round}`, true)
+    review = await reviewTask(t, `re-review-r${round}`, true, findings, fix.fixBase)
   }
   if (!review) return { ok: false, reason: 'reviewer returned no result' }
   return { ok: true }
@@ -404,10 +434,14 @@ async function implementAndReview(t, lane) {
 
 async function mergeTask(t, lane) {
   const first = await enqueueMerge(t, false)
+  if (first.infra) {
+    const again = await enqueueMerge(t, true)
+    return again.ok ? again : { ok: false, reason: first.reason }
+  }
   if (first.ok || !first.retry) return first
   const fix = await fixRound(t, lane, first.findings, 'merge', 1)
   if (!fix.ok) return fix
-  const review = await reviewTask(t, 're-review-merge', true)
+  const review = await reviewTask(t, 're-review-merge', true, first.findings, fix.fixBase)
   if (!review || review.verdict !== 'approved') return { ok: false, reason: `${first.reason}; the fix was not approved` }
   const second = await enqueueMerge(t, true)
   return second.ok ? second : { ok: false, reason: first.reason }
@@ -439,6 +473,7 @@ async function runTask(id) {
   }
   if (state[id] !== 'pending') return state[id]
   const lane = await acquireLane()
+  if (!lane) return finish(id, 'skipped', 'no lane left: every lane holds a blocked task')
   if (state[id] !== 'pending') { releaseLane(lane); return state[id] }
   state[id] = 'running'
   laneOf[id] = lane
@@ -449,16 +484,22 @@ async function runTask(id) {
     if (t.rework) {
       const ruling = t.rework
       t.rework = null
-      const fix = await fixRound(t, lane, [{ severity: 'Important', detail: `Apply the planner ruling: ${ruling}` }], 'ruling', 1)
+      const findings = [{ severity: 'Important', detail: `Apply the planner ruling: ${ruling}` }]
+      const fix = await fixRound(t, lane, findings, 'ruling', 1)
       if (!fix.ok) return finish(id, 'blocked', fix.reason)
-      const review = await reviewTask(t, 're-review-ruling', true)
+      const review = await reviewTask(t, 're-review-ruling', true, findings, fix.fixBase)
       if (!review || review.verdict !== 'approved') return finish(id, 'blocked', 'fix for a planner ruling was not approved')
     }
     if (t.blockReason) return finish(id, 'blocked', t.blockReason)
     const merged = await mergeTask(t, lane)
-    return merged.ok ? finish(id, 'merged') : finish(id, 'blocked', merged.reason)
+    if (!merged.ok) return finish(id, 'blocked', merged.reason)
+    finish(id, 'merged')
+    if (t.rework) { runs.push(lateRuling(id, t.rework, 'planner')); t.rework = null }
+    if (t.blockReason) events.push({ task: id, note: `block arrived after the merge: ${t.blockReason}` })
+    return 'merged'
   } finally {
-    releaseLane(lane)
+    if (state[id] === 'blocked') retireLane(lane)
+    else releaseLane(lane)
   }
 }
 
@@ -479,7 +520,7 @@ async function pump() {
   mergeBusy = true
   const batch = mergeQueue.splice(0, BATCH)
   const n = ++batchNo
-  const res = await agent(mergePrompt(batch.map(b => b.t)), {
+  const res = await call(mergePrompt(batch.map(b => b.t)), {
     label: `merge·b${n}`, phase: 'Merge queue', agentType: AG.fast, schema: MERGE_SCHEMA,
   })
   events.push({ batch: n, tasks: batch.map(b => b.t.id), result: res })
@@ -499,7 +540,7 @@ async function pump() {
         findings: [{ severity: 'Critical', detail: `The full suite (\`${A.graph.test_command}\`) fails once this task is merged into ${A.planBranch}; see ${res.test_log}. Merge ${A.planBranch} into your branch, fix, and run the full suite in the lane.` }],
       })
     } else {
-      d.resolve({ ok: false, retry: false, reason: res ? 'merge queue did not merge the task' : 'merge agent returned no result' })
+      d.resolve({ ok: false, retry: false, infra: !isRetry, reason: res ? `merge queue error: ${res.test_log}` : 'merge agent returned no result' })
     }
   }
   mergeBusy = false
@@ -526,20 +567,26 @@ function report(extra) {
 }
 
 for (const t of A.graph.tasks) addTask(t)
+for (const id of A.merged || []) {
+  if (!tasks.has(id)) continue
+  state[id] = 'merged'
+  mergedSignal[id].resolve(true)
+}
 
 phase('Setup')
-const setup = await agent(setupPrompt(), { label: 'setup', phase: 'Setup', agentType: AG.fast, schema: SETUP_SCHEMA })
+const setup = await call(setupPrompt(), { label: 'setup', phase: 'Setup', agentType: AG.fast, schema: SETUP_SCHEMA })
 if (!setup || !setup.ok) return report({ aborted: true, reason: setup ? setup.error : 'setup agent returned no result' })
 for (const lane of setup.lanes) freeLanes.push(lane)
+liveLanes = setup.lanes.length
 
-for (const id of [...order]) runs.push(runTask(id))
+for (const id of [...order]) if (state[id] === 'pending') runs.push(runTask(id))
 await drain()
 
 phase('Final')
 const anyMerged = order.some(id => state[id] === 'merged')
 const finalReview = anyMerged
-  ? await agent(finalPrompt(), { label: 'final-review', phase: 'Final', agentType: AG.escalation, schema: REVIEW_SCHEMA })
+  ? await call(finalPrompt(), { label: 'final-review', phase: 'Final', agentType: AG.escalation, schema: REVIEW_SCHEMA })
   : null
 const keep = [...new Set(order.filter(id => state[id] === 'blocked' && laneOf[id]).map(id => laneOf[id]))]
-await agent(cleanupPrompt(keep), { label: 'cleanup', phase: 'Final', agentType: AG.fast })
+await call(cleanupPrompt(keep), { label: 'cleanup', phase: 'Final', agentType: AG.fast })
 return report({ aborted: false, final_review: finalReview, lanes_kept: keep })

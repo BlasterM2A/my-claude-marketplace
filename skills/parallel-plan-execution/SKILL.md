@@ -19,9 +19,9 @@ Run `PLUGIN_DIR/scripts/preflight <repo root> <plan path>`.
 
 ## 2. Branch, workspace, briefs
 
-- `BASE_BRANCH` = the current branch. `SLUG` = the plan file name without `.md`. `PLAN_BRANCH` = `plan/<SLUG>`.
-- If `PLAN_BRANCH` exists, this is a resume: `git switch <PLAN_BRANCH>`. Otherwise `git switch -c <PLAN_BRANCH>`.
+- `SLUG` = the plan file name without `.md`. `PLAN_BRANCH` = `plan/<SLUG>`.
 - `WS=$(SP_SKILLS/subagent-driven-development/scripts/sdd-workspace <plan>)`.
+- If `PLAN_BRANCH` exists, this is a resume: read `BASE_BRANCH` from `WS/base-branch` and `git switch <PLAN_BRANCH>`. Otherwise `BASE_BRANCH` = the current branch; write it to `WS/base-branch`, then `git switch -c <PLAN_BRANCH>`.
 - If `WS/progress.md` does not exist, create it with the single line `# SDD ledger — plan: <plan path>`.
 - For N in 1..TASKS: `SP_SKILLS/subagent-driven-development/scripts/task-brief <plan> <N>`.
 
@@ -45,10 +45,14 @@ Call the Workflow tool with `scriptPath: PLUGIN_DIR/workflows/parallel-sdd.js` a
   "plan": "<absolute plan path>", "spec": "<absolute spec path>", "repo": "<absolute repo root>",
   "baseBranch": "<BASE_BRANCH>", "planBranch": "<PLAN_BRANCH>", "slug": "<SLUG>",
   "workspace": "<WS>", "pluginDir": "<PLUGIN_DIR>", "spSkills": "<SP_SKILLS>",
-  "lanes": 3, "graph": <contents of plan-graph.json>
+  "lanes": 3, "graph": <contents of plan-graph.json>,
+  "merged": <MERGED>, "attempt": <ATTEMPT>
 }
 ```
-Tell the user they can follow it in `/workflows`. Keep the returned run id for resumes.
+- `MERGED`: task ids already complete in `WS/progress.md` — each `Task <N>: complete` line gives `T<N>` (`Task N<k>: complete` gives `N<k>`); `[]` on a first run.
+- `ATTEMPT`: the number in `WS/attempt` plus one (1 if the file is missing); write the new value back to `WS/attempt`. A new attempt changes every agent prompt, so no cached result from an earlier attempt is replayed.
+
+Tell the user they can follow it in `/workflows`. Keep the returned run id.
 
 ## 6. Report
 
@@ -59,6 +63,6 @@ When it completes, show:
 4. The final review verdict and its Critical/Important findings.
 5. `lanes_kept`, if any.
 
-If tasks are blocked or skipped, ask the user how to resolve each (fix the plan, fix by hand in the kept lane, or drop the task). After their changes, resume with `Workflow({ scriptPath, resumeFromRunId, args })`, updating `args.graph` if the graph changed.
+If tasks are blocked or skipped, ask the user how to resolve each (fix the plan, fix by hand in the kept lane, or drop the task). After their changes, start a new attempt: repeat step 5 (it recomputes `MERGED` and increments `ATTEMPT`), updating `args.graph` if the graph changed. Tasks added at run time (`N<k>`) are not carried over; the planner re-adds them if they are still needed. Only when a run was interrupted (session closed, usage limit) and nothing changed, relaunch it with `Workflow({ scriptPath, resumeFromRunId, args })` and the same `args` to replay its finished agents from cache.
 
 When everything is merged and the final review has no open Critical/Important findings, use superpowers:finishing-a-development-branch for `PLAN_BRANCH`.
