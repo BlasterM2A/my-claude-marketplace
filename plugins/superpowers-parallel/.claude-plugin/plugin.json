@@ -1,0 +1,5 @@
+{
+  "name": "superpowers-parallel",
+  "description": "Execute approved Superpowers plans in parallel lane worktrees with a serialized merge queue.",
+  "version": "0.1.1"
+}
