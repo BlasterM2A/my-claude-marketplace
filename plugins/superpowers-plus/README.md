@@ -11,6 +11,8 @@ Runs an approved [Superpowers](https://github.com/obra/superpowers) implementati
 
 The plugin bundles the subagents it dispatches: `sp-implementer-fast` (haiku/low), `sp-implementer` (sonnet/medium), `sp-reviewer` (sonnet/medium), `sp-final-reviewer` (opus/high) and `sp-planner` (opus/high). To tune one, define an agent with the same `name` in the project's `.claude/agents/` or in `~/.claude/agents/`: preflight detects it and the run uses yours instead of the bundled copy (`sp-planner` is always the bundled one).
 
+It also bundles `superpowers-plus:sp-orchestrator` (sonnet/medium), a separate entry point for the sequential `superpowers:subagent-driven-development` route rather than this plugin's own parallel workflow — dispatch it directly when you want one plan run end to end without the parallel lanes.
+
 ## Usage
 
 After writing and approving a plan with Superpowers, ask Claude to execute it with `superpowers-plus:parallel-plan-execution`. You approve the task graph; everything else runs in the background (`/workflows` shows progress).

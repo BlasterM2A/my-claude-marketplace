@@ -35,7 +35,7 @@ Then run `node PLUGIN_DIR/scripts/validate-graph.mjs WS/plan-graph.json`. On err
 
 Show the user a table (id, title, deps, risk, tier, files), the critical path, the estimated speedup, the recommendation, `test_command` and `setup_command`. Ask them to approve or correct it; apply corrections to `plan-graph.json` and re-validate.
 
-If the recommendation is `sequential-sdd`, say so and offer the normal route instead (superpowers:subagent-driven-development, run by one `sp-orchestrator` subagent if the user defines that agent). Do not start the Workflow without explicit approval.
+If the recommendation is `sequential-sdd`, say so and offer the normal route instead (superpowers:subagent-driven-development, run by one `superpowers-plus:sp-orchestrator` subagent). Do not start the Workflow without explicit approval.
 
 ## 5. Run the Workflow
 
