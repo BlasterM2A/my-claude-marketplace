@@ -14,7 +14,7 @@ claude plugin install <plugin>@blasterm2a
 | Plugin | Version | Description |
 |:---|:---|:---|
 | [superpowers](https://github.com/obra/superpowers) | 6.4.2 | [Superpowers](https://github.com/obra/superpowers) by Jesse Vincent (MIT), pinned to an upstream release. |
-| [superpowers-plus](plugins/superpowers-plus) | 0.3.2 | Execute approved [Superpowers](https://github.com/obra/superpowers) plans in parallel lane worktrees with a serialized merge queue. |
+| [superpowers-plus](plugins/superpowers-plus) | 0.4.0 | Execute approved [Superpowers](https://github.com/obra/superpowers) plans in parallel lane worktrees with a serialized merge queue. |
 | [docs-mcp-server](plugins/docs-mcp-server) | 0.1.0 | Connect Claude Code to a shared [docs-mcp-server](https://github.com/arabold/docs-mcp-server) and drive it from the shell. |
 
 ### superpowers
