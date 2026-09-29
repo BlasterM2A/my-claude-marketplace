@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Fail when a plugin's shipped files changed since the tag of its current version, i.e. the change
+# would never reach users because `version` was not bumped. A version with no tag yet is pending release.
+#
+# Usage: check-release   (run from the marketplace root)
+set -euo pipefail
+
+[ $# -eq 0 ] || { sed -n '5p' "$0" >&2; exit 2; }
+
+# Paths inside a plugin that do not change what users run.
+not_shipped='^(test|docs)/|^(Taskfile\.yml|mise\.toml|ruff\.toml|AGENTS\.md|CLAUDE\.md|README\.md|\.gitignore)$'
+
+status=0
+for manifest in plugins/*/.claude-plugin/plugin.json; do
+  dir=${manifest%/.claude-plugin/plugin.json}
+  name=$(jq -r .name "$manifest")
+  version=$(jq -r .version "$manifest")
+  tag="$name--v$version"
+
+  if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+    echo "$name $version: not tagged yet (pending release)"
+    continue
+  fi
+
+  changed=$({ git diff --name-only "$tag" -- "$dir"; git ls-files --others --exclude-standard -- "$dir"; } |
+    sed "s#^$dir/##" | grep -Ev "$not_shipped" | sort -u || true)
+  if [ -n "$changed" ]; then
+    echo "$name $version: shipped files changed since $tag; bump the version (bump-version $name <version>):" >&2
+    while IFS= read -r f; do echo "  $f"; done <<<"$changed" >&2
+    status=1
+  else
+    echo "$name $version: matches $tag"
+  fi
+done
+exit $status

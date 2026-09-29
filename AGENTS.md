@@ -3,7 +3,7 @@
 This repository is a Claude Code plugin marketplace. The catalog is `.claude-plugin/marketplace.json`; each plugin lives in `plugins/<name>/` with its own `.claude-plugin/plugin.json`.
 
 - **Adding a plugin:** add its directory under `plugins/`, add an entry to `marketplace.json` (`source` is `./plugins/<name>`, and the entry `name` must equal the `name` in the plugin's `plugin.json`), and add a row to the table in `README.md`.
-- **Releasing a plugin change:** bump `version` in the plugin's `plugin.json` AND in its `marketplace.json` entry, keep them identical, and update the README table (`.claude/skills/release-plugin/bump-version <plugin> <version>` does all three). In Claude Code, `/release-plugin <plugin> <version>` runs the whole release: bump, `task`, fast-forward merge to `main`, push, `claude plugin tag --push` and local install update.
+- **Releasing a plugin change:** bump `version` in the plugin's `plugin.json` AND in its `marketplace.json` entry, keep them identical, and update the README table (`.claude/skills/release-plugin/bump-version <plugin> <version>` does all three). In Claude Code, `/release-plugin <plugin> <version>` runs the whole release: bump, `task`, fast-forward merge to `main`, push, `claude plugin tag --push` and local install update. `task check-release` (part of `task`) fails when a plugin's shipped files changed since the tag of its current version, so a merge without a bump is caught; every release needs its `<plugin>--v<version>` tag for this to work.
 - **Tooling:** tools are pinned with mise (`mise.toml` at the root for `task`; each plugin pins its own test tools in `plugins/<name>/mise.toml`). Add or bump tools with `mise use <tool>@<version>` from the directory that owns them, never by editing `mise.toml` by hand; check that `mise use` reports the intended `mise.toml` (pass `--path mise.toml` if it picks a config file outside the repo).
 - **External plugins:** `superpowers` is an entry pointing at `obra/superpowers` (github source pinned by `ref` tag and `sha` commit), not a directory here. To adopt a new upstream release, update `ref`, `sha` and `version` together and the README row; `bump-version` and `/release-plugin` only handle plugins under `plugins/`.
 - **Validation:** run `task validate` (validates the marketplace and every plugin, and fails when a `plugin.json` version differs from its catalog entry) after every change to a manifest. In Claude Code, a project `PostToolUse` hook (`.claude/hooks/validate-manifest.sh`) runs it automatically after each manifest edit.
@@ -14,7 +14,8 @@ This repository is a Claude Code plugin marketplace. The catalog is `.claude-plu
 ## Commands
 
 ```bash
-task                                              # validate + test everything
+task                                              # validate + test everything + check-release
+task check-release                                # changed plugins were version-bumped
 task validate                                     # catalog + every plugin manifest
 task test                                         # every plugin's own `task test`
 mise -C plugins/<p> exec -- task test             # one plugin (lint + bats + node for superpowers-plus)

@@ -8,10 +8,11 @@ vars:
 
 tasks:
   default:
-    desc: Validate manifests and run every plugin's tests
+    desc: Validate manifests, run every plugin's tests and check that changed plugins were bumped
     cmds:
       - task: validate
       - task: test
+      - task: check-release
 
   validate:
     desc: Validate the marketplace catalog and every plugin manifest
@@ -32,3 +33,8 @@ tasks:
     cmds:
       - for: { var: TESTABLE }
         cmd: mise -C {{.ITEM}} exec -- task test
+
+  check-release:
+    desc: Fail when a plugin's shipped files changed since the tag of its current version
+    cmds:
+      - .claude/skills/release-plugin/check-release
