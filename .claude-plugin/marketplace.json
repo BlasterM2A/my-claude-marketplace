@@ -32,6 +32,12 @@
       "source": "./plugins/docs-mcp-server",
       "description": "Connect Claude Code to a shared docs-mcp-server and drive it from the shell with the docs-mcp CLI.",
       "version": "0.1.0"
+    },
+    {
+      "name": "typescript-native-lsp",
+      "source": "./plugins/typescript-native-lsp",
+      "description": "TypeScript 7 native language server (tsc --lsp --stdio) for Claude Code, replacing typescript-lsp@claude-plugins-official.",
+      "version": "0.1.0"
     }
   ],
   "renames": {

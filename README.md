@@ -16,6 +16,7 @@ claude plugin install <plugin>@blasterm2a
 | [superpowers](https://github.com/obra/superpowers) | 6.4.2 | [Superpowers](https://github.com/obra/superpowers) by Jesse Vincent (MIT), pinned to an upstream release. |
 | [superpowers-plus](plugins/superpowers-plus) | 0.4.2 | Execute approved [Superpowers](https://github.com/obra/superpowers) plans in parallel lane worktrees with a serialized merge queue. |
 | [docs-mcp-server](plugins/docs-mcp-server) | 0.1.0 | Connect Claude Code to a shared [docs-mcp-server](https://github.com/arabold/docs-mcp-server) and drive it from the shell. |
+| [typescript-native-lsp](plugins/typescript-native-lsp) | 0.1.0 | TypeScript 7 native language server (`tsc --lsp --stdio`) for Claude Code. |
 
 ### superpowers
 
@@ -28,6 +29,10 @@ Installing it also installs its dependency, the `superpowers` plugin from this m
 ### docs-mcp-server
 
 Connects Claude Code to a shared [docs-mcp-server](https://github.com/arabold/docs-mcp-server) over MCP and adds the `docs-mcp` command and the `shared-docs` skill. On install it asks for the server's MCP URL; leave it empty to use `DOCS_MCP_URL` instead (the variable wins when both are set). The `docs-mcp` command needs Python 3.10+. See the [plugin README](plugins/docs-mcp-server/README.md).
+
+### typescript-native-lsp
+
+Language server for TypeScript and JavaScript using the native `tsc --lsp --stdio` of TypeScript 7, which `typescript-lsp@claude-plugins-official` cannot use (no `tsserver.js` in TS 7). Disable that plugin when you install this one. It needs TypeScript 7+ with `tsc` on the `PATH` of the process that starts Claude Code. See the [plugin README](plugins/typescript-native-lsp/README.md).
 
 ## Development
 
