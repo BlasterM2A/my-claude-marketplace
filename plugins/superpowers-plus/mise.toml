@@ -2,6 +2,6 @@
 [tools]
 bats = "1.14.0"
 jq = "1.8.2"
-node = "26.10.0"
+node = "26.13.1"
 shellcheck = "0.11.0"
 task = "3.53.1"
