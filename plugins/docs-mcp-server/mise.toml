@@ -1,4 +1,4 @@
 [tools]
 python = "3.14.7"
-ruff = "0.16.9"
+ruff = "0.17.6"
 task = "3.53.1"
